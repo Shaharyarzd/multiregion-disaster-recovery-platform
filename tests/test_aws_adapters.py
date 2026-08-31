@@ -4,12 +4,15 @@ import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from dr_platform.aws_adapters import (
     CloudWatchEvidenceEmitter,
     DynamoRecoveryAdapter,
     EvidenceArchiveAdapter,
     KmsEvidenceSigner,
     S3RecoveryAdapter,
+    recovery_target_name,
 )
 from dr_platform.observability import MetricDatum
 
@@ -49,6 +52,50 @@ class FakeClient:
         return {"VersionId": "evidence-v1"}
 
 
+class ConfiguredTableClient:
+    def describe_table(self, **_kwargs):
+        return {
+            "Table": {
+                "TableArn": "arn:target",
+                "TableStatus": "ACTIVE",
+                "SSEDescription": {"KMSMasterKeyArn": "arn:kms"},
+                "StreamSpecification": {
+                    "StreamEnabled": True,
+                    "StreamViewType": "NEW_AND_OLD_IMAGES",
+                },
+                "Replicas": [],
+                "DeletionProtectionEnabled": True,
+            }
+        }
+
+    def update_table(self, **_kwargs):
+        return {}
+
+    def update_continuous_backups(self, **_kwargs):
+        return {}
+
+    def update_time_to_live(self, **_kwargs):
+        return {}
+
+    def tag_resource(self, **_kwargs):
+        return {}
+
+    def describe_continuous_backups(self, **_kwargs):
+        return {
+            "ContinuousBackupsDescription": {
+                "PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "ENABLED"}
+            }
+        }
+
+    def list_tags_of_resource(self, **_kwargs):
+        return {"Tags": [{"Key": "Project", "Value": "portfolio-dr"}]}
+
+    def describe_time_to_live(self, **_kwargs):
+        return {
+            "TimeToLiveDescription": {"TimeToLiveStatus": "ENABLED", "AttributeName": "expires_at"}
+        }
+
+
 def install_fake_boto3(monkeypatch):
     clients: dict[str, FakeClient] = {}
 
@@ -64,9 +111,21 @@ def test_dynamo_adapter_restores_isolated_target(monkeypatch) -> None:
     clients = install_fake_boto3(monkeypatch)
     adapter = DynamoRecoveryAdapter("us-east-1")
     point = datetime(2026, 1, 1, tzinfo=UTC)
-    assert adapter.restore_to_isolated_table("arn:source", "isolated", point) == "arn:isolated"
+    assert (
+        adapter.restore_to_isolated_table(
+            "arn:source", "source-recovery-run", point, kms_key_arn="arn:kms"
+        )
+        == "arn:isolated"
+    )
     assert adapter.describe("isolated")["TableName"] == "isolated"
     assert clients["dynamodb"].calls[0][1]["UseLatestRestorableTime"] is False
+    request = clients["dynamodb"].calls[0][1]
+    assert request["BillingModeOverride"] == "PAY_PER_REQUEST"
+    assert request["SSESpecificationOverride"]["KMSMasterKeyId"] == "arn:kms"
+    assert recovery_target_name("source", "run/id") == "source-recovery-run-id"
+    assert len(recovery_target_name("s" * 255, "run-id")) == 255
+    with pytest.raises(ValueError, match="isolated"):
+        adapter.restore_to_isolated_table("arn:source", "source", point, kms_key_arn="arn:kms")
 
 
 def test_s3_adapter_recovers_to_quarantine(monkeypatch) -> None:
@@ -79,9 +138,23 @@ def test_s3_adapter_recovers_to_quarantine(monkeypatch) -> None:
     assert copy["CopySource"]["VersionId"] == "v1"
 
 
+def test_restored_table_requires_post_restore_configuration_proof() -> None:
+    adapter = object.__new__(DynamoRecoveryAdapter)
+    adapter.client = ConfiguredTableClient()
+    proof = adapter.configure_restored_table(
+        "source-recovery-run",
+        expected_kms_key_arn="arn:kms",
+        tags={"Project": "portfolio-dr"},
+        ttl_attribute="expires_at",
+        stream_view_type="NEW_AND_OLD_IMAGES",
+    )
+    assert proof.ready_for_validation
+    assert proof.no_replicas
+
+
 def test_cloudwatch_kms_and_archive_adapters(monkeypatch) -> None:
     clients = install_fake_boto3(monkeypatch)
-    metric = MetricDatum("RegionHealthy", 1.0, "Count", datetime.now(UTC), {"RunId": "r"})
+    metric = MetricDatum("RegionHealthy", 1.0, "Count", datetime.now(UTC), {"Project": "p"})
     CloudWatchEvidenceEmitter("us-east-1").emit([metric])
     assert clients["cloudwatch"].calls[-1][0] == "metrics"
 
@@ -95,3 +168,10 @@ def test_cloudwatch_kms_and_archive_adapters(monkeypatch) -> None:
     )
     assert version == "evidence-v1"
     assert clients["s3"].calls[-1][1]["ObjectLockMode"] == "GOVERNANCE"
+    assert clients["s3"].calls[-1][1]["ChecksumAlgorithm"] == "SHA256"
+    assert (
+        EvidenceArchiveAdapter.object_key("scenario-1", "run-1")
+        == "evidence/scenario-1/run-1/recovery-report.json"
+    )
+    with pytest.raises(ValueError, match="unsafe"):
+        EvidenceArchiveAdapter.object_key("scenario/1", "run-1")

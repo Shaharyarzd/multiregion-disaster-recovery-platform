@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from datetime import datetime
+from typing import Protocol
 
 from dr_platform.data_validation import dataset_checksum
 from dr_platform.types import Transaction, iso, normalize_utc
@@ -58,6 +59,126 @@ class ConsistencyProof:
             and self.no_pending_replay
             and 0 <= self.replication_lag_seconds <= self.maximum_allowed_lag_seconds
         )
+
+
+class ReplayTarget(Protocol):
+    """Conditional target used by the bounded portfolio replay."""
+
+    def get(self, transaction_id: str) -> Transaction | None: ...
+
+    def put_if_absent(self, transaction: Transaction) -> bool: ...
+
+
+@dataclass(frozen=True)
+class ReplayResult:
+    plan_checksum: str
+    validation_timestamp: datetime
+    executed_at: datetime
+    requested_ids: tuple[str, ...]
+    applied_ids: tuple[str, ...]
+    idempotent_ids: tuple[str, ...]
+    conflict_ids: tuple[str, ...]
+    failed_ids: tuple[str, ...]
+    dry_run: bool
+    approved: bool
+    approver: str | None
+    approval_reference: str | None
+
+    @property
+    def complete(self) -> bool:
+        return bool(
+            not self.dry_run
+            and self.approved
+            and not self.conflict_ids
+            and not self.failed_ids
+            and set(self.requested_ids) == set(self.applied_ids + self.idempotent_ids)
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            **asdict(self),
+            "validation_timestamp": iso(self.validation_timestamp),
+            "executed_at": iso(self.executed_at),
+            "complete": self.complete,
+        }
+
+
+def execute_replay(
+    plan: ReconciliationPlan,
+    candidates: list[Transaction],
+    target: ReplayTarget,
+    *,
+    validation_timestamp: datetime,
+    executed_at: datetime,
+    approved: bool,
+    approver: str | None = None,
+    approval_reference: str | None = None,
+    dry_run: bool = True,
+    batch_size: int = 25,
+) -> ReplayResult:
+    """Execute only the deterministic unique-write plan using conditional puts.
+
+    This is intentionally not a general merge engine. Existing different content,
+    missing candidates, stale validation, and partial write failures are evidence and
+    hard promotion blockers.
+    """
+    checked = normalize_utc(validation_timestamp)
+    executed = normalize_utc(executed_at)
+    if batch_size < 1 or batch_size > 25:
+        raise ValueError("replay batch_size must be between 1 and 25")
+    if executed < checked:
+        raise ValueError("replay cannot precede validation")
+    if approved and (not approver or not approval_reference):
+        raise ValueError("approved replay requires approver and approval reference")
+    wanted = plan.replay_transaction_ids
+    by_id = {item.transaction_id: item for item in candidates}
+    applied: list[str] = []
+    idempotent: list[str] = []
+    conflicts: list[str] = []
+    failed: list[str] = []
+    for transaction_id in wanted[:batch_size]:
+        candidate = by_id.get(transaction_id)
+        if candidate is None:
+            failed.append(transaction_id)
+            continue
+        existing = target.get(transaction_id)
+        if existing is not None:
+            (idempotent if existing.canonical() == candidate.canonical() else conflicts).append(
+                transaction_id
+            )
+            continue
+        if dry_run:
+            continue
+        if not approved:
+            failed.append(transaction_id)
+            continue
+        try:
+            if target.put_if_absent(candidate):
+                applied.append(transaction_id)
+            else:
+                concurrent = target.get(transaction_id)
+                if concurrent and concurrent.canonical() == candidate.canonical():
+                    idempotent.append(transaction_id)
+                else:
+                    conflicts.append(transaction_id)
+        except Exception:  # the exact item remains retryable through conditional idempotency
+            failed.append(transaction_id)
+    if len(wanted) > batch_size:
+        failed.extend(wanted[batch_size:])
+    return ReplayResult(
+        plan_checksum=plan.authoritative_checksum,
+        validation_timestamp=checked,
+        executed_at=executed,
+        requested_ids=wanted,
+        applied_ids=tuple(sorted(applied)),
+        idempotent_ids=tuple(sorted(idempotent)),
+        conflict_ids=tuple(sorted(conflicts)),
+        failed_ids=tuple(sorted(failed)),
+        dry_run=dry_run,
+        approved=approved,
+        approver=approver,
+        approval_reference=approval_reference,
+    )
 
 
 def plan_reconciliation(

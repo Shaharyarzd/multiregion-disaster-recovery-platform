@@ -40,6 +40,16 @@ def test_cli_drill_and_store_round_trip(tmp_path) -> None:
 
     execute(args(tmp_path, "recover-data", recovery_point=failure - timedelta(seconds=1)))
     execute(args(tmp_path, "validate-recovery"))
+    execute(
+        args(
+            tmp_path,
+            "reconcile",
+            dry_run=False,
+            approve=True,
+            approver="owner",
+            reference="LOCAL-REPLAY",
+        )
+    )
     promoted = execute(
         args(
             tmp_path,
@@ -102,6 +112,16 @@ def test_cli_completes_controlled_failback(tmp_path) -> None:
     )
     execute(args(tmp_path, "recover-data", recovery_point=failure - timedelta(seconds=1)))
     execute(args(tmp_path, "validate-recovery"))
+    execute(
+        args(
+            tmp_path,
+            "reconcile",
+            dry_run=False,
+            approve=True,
+            approver="owner",
+            reference="LOCAL-REPLAY",
+        )
+    )
     execute(
         args(
             tmp_path,

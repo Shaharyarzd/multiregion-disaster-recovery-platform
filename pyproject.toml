@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "multiregion-disaster-recovery-platform"
-version = "0.2.0"
+version = "0.3.0"
 description = "Active-active AWS disaster recovery orchestration and evidence platform"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ dev = [
   "pytest-cov>=5,<7",
   "ruff>=0.6,<1",
   "mypy>=1.11,<2",
+  "cryptography>=43,<47",
 ]
 aws = ["boto3>=1.35,<2"]
 

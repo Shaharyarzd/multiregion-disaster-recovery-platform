@@ -134,3 +134,4 @@ class Incident:
     validation_started_at: datetime | None = None
     rto_end_at: datetime | None = None
     reconciliation: dict[str, Any] | None = None
+    restore_configuration: dict[str, Any] | None = None

@@ -139,14 +139,15 @@ resource "aws_cloudwatch_dashboard" "dr" {
         region = var.region
         metrics = [
           ["AWS/Lambda", "Errors", "FunctionName", aws_lambda_function.app.function_name],
-          ["Portfolio/DisasterRecovery", "RegionHealthy", "Region", var.region],
-          [".", "MeasuredRTOSeconds", ".", "."],
-          [".", "MeasuredRPOSeconds", ".", "."],
-          [".", "RecoveryValidationPassed", ".", "."],
-          [".", "LastSuccessfulDrDrillEpoch", ".", "."],
-          [".", "RecoveryState", "RunId", "CURRENT_RUN"],
-          [".", "RestoreDurationSeconds", ".", "."],
-          [".", "RecoveryFailure", ".", "."],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario,Region} MetricName=\"RegionHealthy\" Project=\"${var.name}\" Region=\"${var.region}\"', 'Maximum', 60)", id = "region_health" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"MeasuredRTO\" Project=\"${var.name}\"', 'Maximum', 60)", id = "rto" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"MeasuredRPO\" Project=\"${var.name}\"', 'Maximum', 60)", id = "rpo" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"ValidationResult\" Project=\"${var.name}\"', 'Minimum', 60)", id = "validation" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"RecoveryState\" Project=\"${var.name}\"', 'Maximum', 60)", id = "state" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"RestoreDuration\" Project=\"${var.name}\"', 'Maximum', 60)", id = "restore" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"ReplicationLag\" Project=\"${var.name}\"', 'Maximum', 60)", id = "replication_lag" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario} MetricName=\"LastSuccessfulDrill\" Project=\"${var.name}\"', 'Maximum', 60)", id = "last_drill" }],
+          [{ expression = "SEARCH('{Portfolio/DisasterRecovery,Project,Scenario,Code} MetricName=\"FailureCode\" Project=\"${var.name}\"', 'Sum', 60)", id = "failures" }],
           ["AWS/DynamoDB", "ReplicationLatency", "TableName", var.table_name, "ReceivingRegion", var.region],
         ]
       }

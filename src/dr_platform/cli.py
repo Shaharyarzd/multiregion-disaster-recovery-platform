@@ -42,6 +42,11 @@ def parser() -> argparse.ArgumentParser:
     recovery = commands.add_parser("recover-data")
     recovery.add_argument("--recovery-point", type=parse_time)
     commands.add_parser("validate-recovery")
+    reconcile = commands.add_parser("reconcile")
+    reconcile.add_argument("--dry-run", action="store_true")
+    reconcile.add_argument("--approve", action="store_true")
+    reconcile.add_argument("--approver")
+    reconcile.add_argument("--reference")
     promote = commands.add_parser("promote")
     promote.add_argument("--approve", action="store_true")
     promote.add_argument("--approver", required=True)
@@ -80,6 +85,20 @@ class LocalValidationInputs(TypedDict):
     cross_region_consistency: bool
     synthetic_transaction: bool
     reconciliation: ReconciliationPlan
+
+
+class LocalReplayTarget:
+    def __init__(self, transactions: list[Transaction]) -> None:
+        self.items = {item.transaction_id: item for item in transactions}
+
+    def get(self, transaction_id: str) -> Transaction | None:
+        return self.items.get(transaction_id)
+
+    def put_if_absent(self, transaction: Transaction) -> bool:
+        if transaction.transaction_id in self.items:
+            return False
+        self.items[transaction.transaction_id] = transaction
+        return True
 
 
 def local_validation_inputs(
@@ -154,11 +173,43 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
         orchestrator.start_recovery(incident, args.recovery_point)
     elif args.command == "validate-recovery":
         if incident.state is RecoveryState.RECOVERY_IN_PROGRESS:
-            orchestrator.begin_validation(incident, utc_now())
+            orchestrator.begin_validation(
+                incident,
+                utc_now(),
+                restore_configuration={
+                    "table_active": True,
+                    "encryption_verified": True,
+                    "pitr_enabled": True,
+                    "tags_verified": True,
+                    "ttl_verified": True,
+                    "stream_verified": True,
+                    "no_replicas": True,
+                    "deletion_protection": True,
+                    "ready_for_validation": True,
+                },
+            )
         if incident.recovery_point is None:
             raise DrError("Recovery point is required before validation")
         validation = local_validation_inputs(incident.failure_at, incident.recovery_point)
         orchestrator.record_validation(incident, **validation)
+    elif args.command == "reconcile":
+        if incident.recovery_point is None:
+            raise DrError("Recovery point is required before reconciliation")
+        live = synthetic_transactions(incident.failure_at)
+        restored = [item for item in live if item.timestamp <= incident.recovery_point]
+        plan = plan_reconciliation(
+            restored, live, incident.recovery_point, incident.failure_at, set()
+        )
+        orchestrator.reconcile(
+            incident,
+            plan,
+            live,
+            LocalReplayTarget(restored),
+            approved=args.approve,
+            dry_run=args.dry_run,
+            approver=args.approver,
+            reference=args.reference,
+        )
     elif args.command == "promote":
         orchestrator.promote(
             incident,

@@ -14,6 +14,10 @@ drctl --state-dir "${state_dir}" declare \
   --affected-region us-east-1
 drctl --state-dir "${state_dir}" recover-data --recovery-point "${recovery_point}"
 drctl --state-dir "${state_dir}" validate-recovery
+drctl --state-dir "${state_dir}" reconcile \
+  --approve \
+  --approver local-portfolio-owner \
+  --reference LOCAL-REPLAY-ONLY
 drctl --state-dir "${state_dir}" promote \
   --approve \
   --approver local-portfolio-owner \

@@ -30,7 +30,7 @@ def test_report_calculates_measured_values(declared) -> None:
     assert report["measurements"]["rto"]["derived_seconds"] == 42
     assert report["measurements"]["rpo"]["derived_seconds"] == 5
     assert report["validation_result"] == "PASS"
-    assert report["schema"]["version"] == "2.0.0"
+    assert report["schema"]["version"] == "2.1.0"
     assert verify_report(report)
 
 

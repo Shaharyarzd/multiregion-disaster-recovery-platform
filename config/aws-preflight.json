@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "allowed_statuses": ["OFFLINE_PASS", "PENDING AWS PREFLIGHT"],
+  "checks": [
+    {"id": "regions.enabled", "status": "PENDING AWS PREFLIGHT", "proof": "EC2 DescribeRegions opt-in status for both configured regions"},
+    {"id": "services.available", "status": "PENDING AWS PREFLIGHT", "proof": "DynamoDB, Lambda, API Gateway, KMS, S3 and CloudWatch endpoints available in both regions"},
+    {"id": "dynamodb.global-table", "status": "PENDING AWS PREFLIGHT", "proof": "Table ACTIVE, both replicas ACTIVE, same empty-table/schema requirements satisfied"},
+    {"id": "dynamodb.pitr", "status": "PENDING AWS PREFLIGHT", "proof": "PITR ENABLED and selected timestamp inside earliest/latest restorable window"},
+    {"id": "dynamodb.quota", "status": "PENDING AWS PREFLIGHT", "proof": "DescribeLimits and account table/replica quota headroom"},
+    {"id": "lambda-api.quotas", "status": "PENDING AWS PREFLIGHT", "proof": "Service Quotas and reserved concurrency/API quota headroom"},
+    {"id": "kms.keys", "status": "PENDING AWS PREFLIGHT", "proof": "Regional keys ENABLED; signing key SIGN_VERIFY ECC_NIST_P256; grant/request quotas available"},
+    {"id": "s3.replication", "status": "PENDING AWS PREFLIGHT", "proof": "Versioning enabled both buckets, replication role trusted, KMS paths authorized"},
+    {"id": "s3.object-lock", "status": "PENDING AWS PREFLIGHT", "proof": "Object Lock enabled at creation, versioning enabled, default GOVERNANCE retention 7 days"},
+    {"id": "iam.access-analyzer", "status": "PENDING AWS PREFLIGHT", "proof": "ValidatePolicy and policy simulation for actual role ARNs/resources"},
+    {"id": "iam.service-linked-roles", "status": "PENDING AWS PREFLIGHT", "proof": "Any account-created service-linked roles can be created or already exist"},
+    {"id": "offline.config-schema", "status": "OFFLINE_PASS", "proof": "Repository tests validate deterministic config schemas and guardrails"}
+  ]
+}

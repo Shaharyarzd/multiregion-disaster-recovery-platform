@@ -10,13 +10,19 @@ from uuid import uuid4
 from dr_platform.data_validation import Comparison
 from dr_platform.errors import ApprovalRequired, ValidationFailed
 from dr_platform.health import failback_safe
-from dr_platform.reconciliation import ConsistencyProof, ReconciliationPlan
+from dr_platform.reconciliation import (
+    ConsistencyProof,
+    ReconciliationPlan,
+    ReplayTarget,
+    execute_replay,
+)
 from dr_platform.state_machine import RecoveryStateMachine
 from dr_platform.types import (
     Incident,
     RecoveryState,
     RegionHealth,
     Scenario,
+    Transaction,
     ValidationResult,
     iso,
     normalize_utc,
@@ -76,7 +82,32 @@ class RecoveryOrchestrator:
             incident, RecoveryState.RECOVERY_IN_PROGRESS, reason="isolated restore started"
         )
 
-    def begin_validation(self, incident: Incident, infrastructure_ready_at: datetime) -> Incident:
+    def begin_validation(
+        self,
+        incident: Incident,
+        infrastructure_ready_at: datetime,
+        *,
+        restore_configuration: dict[str, object] | None = None,
+    ) -> Incident:
+        if incident.scenario is Scenario.LOGICAL_CORRUPTION:
+            required = {
+                "table_active",
+                "encryption_verified",
+                "pitr_enabled",
+                "tags_verified",
+                "ttl_verified",
+                "stream_verified",
+                "no_replicas",
+                "deletion_protection",
+                "ready_for_validation",
+            }
+            if not restore_configuration or not all(
+                restore_configuration.get(key) is True for key in required
+            ):
+                raise ValidationFailed(
+                    "PITR completion is insufficient: restored-table configuration is unproven"
+                )
+            incident.restore_configuration = dict(restore_configuration)
         incident.infrastructure_ready_at = infrastructure_ready_at
         incident.restore_completed_at = infrastructure_ready_at
         return self.machine.transition(incident, RecoveryState.VALIDATING)
@@ -127,11 +158,61 @@ class RecoveryOrchestrator:
             if reconciliation is None:
                 raise ValidationFailed("Logical recovery requires a reconciliation plan")
             incident.reconciliation = reconciliation.as_dict()
+            incident.reconciliation["replay_result"] = {
+                "complete": not bool(reconciliation.replay_transaction_ids),
+                "status": (
+                    "NOT_REQUIRED"
+                    if not reconciliation.replay_transaction_ids
+                    else "AWAITING_APPROVAL"
+                ),
+            }
             if not reconciliation.safe_to_promote:
                 raise ValidationFailed("Recovery remains isolated: reconciliation conflicts exist")
         if not incident.validation.passed:
             raise ValidationFailed("Recovery remains isolated because validation failed")
-        return self.machine.transition(incident, RecoveryState.AWAITING_APPROVAL)
+        validated = self.machine.transition(incident, RecoveryState.AWAITING_APPROVAL)
+        if validated.reconciliation is not None:
+            validated.reconciliation["validation_timestamp"] = iso(
+                validated.validation_completed_at
+            )
+        return validated
+
+    def reconcile(
+        self,
+        incident: Incident,
+        plan: ReconciliationPlan,
+        candidates: list[Transaction],
+        target: ReplayTarget,
+        *,
+        approved: bool,
+        dry_run: bool,
+        approver: str | None = None,
+        reference: str | None = None,
+    ) -> Incident:
+        if incident.state is not RecoveryState.AWAITING_APPROVAL or not incident.reconciliation:
+            raise ValidationFailed("Replay requires a validated recovery awaiting approval")
+        validation_time = incident.validation_completed_at
+        recorded_time = incident.reconciliation.get("validation_timestamp")
+        if validation_time is None or recorded_time != iso(validation_time):
+            raise ValidationFailed("Replay blocked because validation evidence is stale")
+        if not dry_run and not approved:
+            raise ApprovalRequired("Material reconciliation requires explicit approval")
+        result = execute_replay(
+            plan,
+            candidates,
+            target,
+            validation_timestamp=validation_time,
+            executed_at=self.clock(),
+            approved=approved,
+            approver=approver,
+            approval_reference=reference,
+            dry_run=dry_run,
+        )
+        incident.reconciliation["replay_result"] = result.as_dict()
+        incident.reconciliation["status"] = (
+            "REPLAY_COMPLETE" if result.complete else "DRY_RUN" if dry_run else "BLOCKED"
+        )
+        return incident
 
     def promote(
         self, incident: Incident, *, approved: bool, approver: str, reference: str
@@ -143,7 +224,13 @@ class RecoveryOrchestrator:
                 raise ValidationFailed(
                     "Promotion blocked without a conflict-free reconciliation plan"
                 )
-            incident.reconciliation["status"] = "APPROVED_FOR_BOUNDED_REPLAY"
+            replay_result = incident.reconciliation.get("replay_result", {})
+            if not isinstance(replay_result, dict) or not replay_result.get("complete"):
+                raise ValidationFailed("Promotion blocked until bounded replay completes")
+            validation_time = incident.reconciliation.get("validation_timestamp")
+            if validation_time != iso(incident.validation_completed_at):
+                raise ValidationFailed("Promotion blocked because validation evidence is stale")
+            incident.reconciliation["status"] = "PROMOTION_APPROVED"
         incident.approver = approver
         incident.approval_reference = reference
         return self.machine.transition(

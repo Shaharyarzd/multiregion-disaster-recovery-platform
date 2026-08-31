@@ -13,7 +13,7 @@ from dr_platform.integrity import canonical_json, sha256_hex, verify_event_chain
 from dr_platform.types import Incident, iso
 
 SCHEMA_ID = "com.portfolio.dr.recovery-report"
-SCHEMA_VERSION = "2.0.0"
+SCHEMA_VERSION = "2.1.0"
 SENSITIVE_KEY = re.compile(r"(secret|token|password|authorization|credential)", re.IGNORECASE)
 AWS_TRUSTED_TIMESTAMP_SOURCES = {
     "incident_declaration": {"CONTROLLER_UTC_SYNCED", "AWS_EVENT_TIMESTAMP"},
@@ -138,6 +138,7 @@ def build_report(incident: Incident, signer: EvidenceSigner | None = None) -> di
                 "data_recovery_point": iso(incident.recovery_point),
                 "measurements": _measurement_inputs(incident, newest),
                 "record_counts": incident.record_counts,
+                "restore_configuration": incident.restore_configuration,
                 "reconciliation": incident.reconciliation,
                 "validation": validation,
                 "validation_result": (

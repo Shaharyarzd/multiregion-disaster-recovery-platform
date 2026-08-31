@@ -13,6 +13,7 @@ module "github_oidc" {
   github_repository      = var.github_repository
   deployment_environment = "aws-deployment"
   recovery_environment   = "aws-recovery-approval"
+  evidence_environment   = "aws-evidence-approval"
   resource_prefix        = var.name
   tags                   = local.tags
 }
@@ -24,4 +25,3 @@ locals {
     ManagedBy          = "Terraform"
   }
 }
-

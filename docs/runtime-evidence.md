@@ -1,6 +1,6 @@
 # Runtime evidence
 
-`drctl report` emits schema `com.portfolio.dr.recovery-report/2.0.0`. It includes run/scenario IDs,
+`drctl report` emits schema `com.portfolio.dr.recovery-report/2.1.0`. It includes run/scenario IDs,
 timestamp authorities, raw RTO/RPO inputs, derived values, reconciliation, approvals, promotion and
 failback state. Events form a SHA-256 previous-hash chain; the canonical report body has its own
 SHA-256. `verify_report` detects edits. A local file is explicitly `UNSIGNED` and
@@ -30,7 +30,9 @@ Recommended production retention: upload the JSON and hashed raw probes to an Ob
 bucket in a security account, KMS-sign the report digest, and attach it to the incident/change. Do
 not store access tokens, API headers, plaintext payloads, or Terraform state in evidence.
 
-Useful CloudWatch namespace `Portfolio/DisasterRecovery` signals are `RegionHealthy`,
-`LatestRecoveryPointAgeSeconds`, `RecoveryValidationPassed`, `RecoveryDurationSeconds`,
-`MeasuredRTOSeconds`, `MeasuredRPOSeconds`, and `LastSuccessfulDrDrillEpoch`. The Terraform dashboard
-defines the key result metrics; Milestone 2 wires controller emission and alarm thresholds.
+The CloudWatch namespace is `Portfolio/DisasterRecovery`. Its exact metric contract is
+`RegionHealthy` (Count, Region dimension), `RecoveryState` (None), `RestoreDuration` (Seconds),
+`ValidationResult` (Count), `ReplicationLag` (Milliseconds), `MeasuredRTO`/`MeasuredRPO` (Seconds),
+`LastSuccessfulDrill` (epoch Seconds), and `FailureCode` (Count with a bounded code). Metrics use
+only `Project`, bounded `Scenario`, and where applicable `Region`/bounded `Code`; run and scenario
+IDs remain structured-log fields to avoid unbounded cardinality. Actual emission is **PENDING AWS**.

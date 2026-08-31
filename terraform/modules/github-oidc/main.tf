@@ -54,28 +54,63 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["arn:${data.aws_partition.current.partition}:lambda:*:${data.aws_caller_identity.current.account_id}:function:${var.resource_prefix}-*"]
   }
   statement {
-    sid       = "ManagePortfolioHttpApis"
-    actions   = ["apigateway:DELETE", "apigateway:GET", "apigateway:PATCH", "apigateway:POST", "apigateway:PUT"]
+    sid       = "ReadHttpApisForTerraform"
+    actions   = ["apigateway:GET"]
     resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis*"]
   }
   statement {
-    sid = "ManagePortfolioRuntimeObservability"
+    sid       = "CreateTaggedPortfolioHttpApis"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+  }
+  statement {
+    sid       = "ManageTaggedPortfolioHttpApis"
+    actions   = ["apigateway:DELETE", "apigateway:PATCH", "apigateway:POST", "apigateway:PUT"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.resource_prefix]
+    }
+  }
+  statement {
+    sid       = "ReadRuntimeObservability"
+    actions   = ["cloudwatch:DescribeAlarms", "logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+  statement {
+    sid = "ManagePortfolioAlarms"
     actions = [
       "cloudwatch:DeleteAlarms",
+      "cloudwatch:PutMetricAlarm",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:cloudwatch:*:${data.aws_caller_identity.current.account_id}:alarm:${var.resource_prefix}-*"]
+  }
+  statement {
+    sid = "ManagePortfolioDashboards"
+    actions = [
       "cloudwatch:DeleteDashboards",
-      "cloudwatch:DescribeAlarms",
       "cloudwatch:GetDashboard",
       "cloudwatch:PutDashboard",
-      "cloudwatch:PutMetricAlarm",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:cloudwatch::${data.aws_caller_identity.current.account_id}:dashboard/${var.resource_prefix}-*"]
+  }
+  statement {
+    sid = "ManagePortfolioLogGroups"
+    actions = [
       "logs:CreateLogGroup",
       "logs:DeleteLogGroup",
-      "logs:DescribeLogGroups",
       "logs:ListTagsForResource",
       "logs:PutRetentionPolicy",
       "logs:TagResource",
       "logs:UntagResource",
     ]
-    resources = ["*"]
+    resources = ["arn:${data.aws_partition.current.partition}:logs:*:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${var.resource_prefix}-*"]
   }
   statement {
     sid = "ManagePortfolioLambdaRoles"
@@ -107,6 +142,115 @@ data "aws_iam_policy_document" "deploy" {
   statement {
     sid       = "ReadSharedRuntimeDependencies"
     actions   = ["dynamodb:DescribeTable", "kms:DescribeKey", "s3:GetBucketLocation", "s3:ListBucket"]
+    resources = ["*"]
+  }
+  statement {
+    sid = "ManageProjectDynamoInfrastructure"
+    actions = [
+      "dynamodb:CreateTable",
+      "dynamodb:DeleteTable",
+      "dynamodb:DescribeContinuousBackups",
+      "dynamodb:DescribeTable",
+      "dynamodb:ListTagsOfResource",
+      "dynamodb:TagResource",
+      "dynamodb:UntagResource",
+      "dynamodb:UpdateContinuousBackups",
+      "dynamodb:UpdateTable",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*"]
+  }
+  statement {
+    sid = "ManageProjectS3Infrastructure"
+    actions = [
+      "s3:CreateBucket",
+      "s3:DeleteBucket",
+      "s3:DeleteBucketPolicy",
+      "s3:DeleteObject",
+      "s3:DeleteObjectVersion",
+      "s3:GetBucketEncryption",
+      "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketPolicy",
+      "s3:GetBucketPublicAccessBlock",
+      "s3:GetBucketReplication",
+      "s3:GetBucketTagging",
+      "s3:GetBucketVersioning",
+      "s3:ListBucket",
+      "s3:ListBucketVersions",
+      "s3:PutBucketEncryption",
+      "s3:PutBucketObjectLockConfiguration",
+      "s3:PutBucketPolicy",
+      "s3:PutBucketPublicAccessBlock",
+      "s3:PutBucketReplication",
+      "s3:PutBucketTagging",
+      "s3:PutBucketVersioning",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*/*",
+    ]
+  }
+  statement {
+    sid       = "CreateTaggedProjectKmsKeys"
+    actions   = ["kms:CreateKey"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+  }
+  statement {
+    sid = "ManageTaggedProjectKmsKeys"
+    actions = [
+      "kms:DescribeKey",
+      "kms:EnableKeyRotation",
+      "kms:GetKeyPolicy",
+      "kms:GetKeyRotationStatus",
+      "kms:ListGrants",
+      "kms:ListResourceTags",
+      "kms:PutKeyPolicy",
+      "kms:ScheduleKeyDeletion",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:UpdateKeyDescription",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.resource_prefix]
+    }
+  }
+  statement {
+    sid       = "CreateOnlyAwsResourceKmsGrants"
+    actions   = ["kms:CreateGrant"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "Bool"
+      variable = "kms:GrantIsForAWSResource"
+      values   = ["true"]
+    }
+  }
+  statement {
+    sid = "ManageProjectKmsAliases"
+    actions = [
+      "kms:CreateAlias",
+      "kms:DeleteAlias",
+      "kms:UpdateAlias",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:alias/${var.resource_prefix}-*",
+      "arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*",
+    ]
+  }
+  statement {
+    sid       = "ReadKmsAliases"
+    actions   = ["kms:ListAliases"]
     resources = ["*"]
   }
   statement {
@@ -156,8 +300,14 @@ data "aws_iam_policy_document" "recovery" {
       "dynamodb:DescribeContinuousBackups",
       "dynamodb:DescribeTable",
       "dynamodb:ListBackups",
+      "dynamodb:ListTagsOfResource",
       "dynamodb:RestoreTableToPointInTime",
       "dynamodb:Scan",
+      "dynamodb:TagResource",
+      "dynamodb:UpdateContinuousBackups",
+      "dynamodb:UpdateTable",
+      "dynamodb:UpdateTimeToLive",
+      "dynamodb:DescribeTimeToLive",
     ]
     resources = [
       "arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}*"
@@ -165,28 +315,24 @@ data "aws_iam_policy_document" "recovery" {
   }
   statement {
     sid       = "ReplayOnlyToIsolatedRecoveryTargets"
-    actions   = ["dynamodb:BatchWriteItem", "dynamodb:PutItem"]
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
     resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
   }
   statement {
     sid = "RecoverVersionedObjects"
     actions = [
       "s3:GetObjectVersion",
+      "s3:GetObject",
       "s3:ListBucketVersions",
       "s3:PutObject",
-      "s3:PutObjectRetention",
+      "s3:DeleteObject",
     ]
     resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*"]
   }
   statement {
-    sid       = "SignEvidenceWithProjectKey"
-    actions   = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"]
-    resources = ["arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:ResourceTag/Project"
-      values   = [var.resource_prefix]
-    }
+    sid       = "DeleteOnlyIsolatedRecoveryTargets"
+    actions   = ["dynamodb:DeleteTable"]
+    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
   }
   statement {
     sid       = "UseProjectDataKeysForRecovery"
@@ -222,4 +368,70 @@ data "aws_iam_policy_document" "recovery" {
 resource "aws_iam_role_policy" "recovery" {
   role   = aws_iam_role.recovery.id
   policy = data.aws_iam_policy_document.recovery.json
+}
+
+data "aws_iam_policy_document" "evidence_assume" {
+  statement {
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_repository}:environment:${var.evidence_environment}"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "evidence" {
+  name                 = "${var.name}-github-evidence"
+  assume_role_policy   = data.aws_iam_policy_document.evidence_assume.json
+  max_session_duration = 3600
+  tags                 = var.tags
+}
+
+data "aws_iam_policy_document" "evidence" {
+  statement {
+    sid       = "SignAndVerifyEvidence"
+    actions   = ["kms:Sign", "kms:Verify", "kms:GetPublicKey", "kms:DescribeKey"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/KeyPurpose"
+      values   = ["evidence-signing"]
+    }
+  }
+  statement {
+    sid = "ArchiveAndReadBackEvidence"
+    actions = [
+      "s3:GetBucketObjectLockConfiguration",
+      "s3:GetObject",
+      "s3:GetObjectRetention",
+      "s3:ListBucket",
+      "s3:PutObject",
+      "s3:PutObjectRetention",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*-evidence",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*-evidence/evidence/*",
+    ]
+  }
+  statement {
+    sid       = "NeverBypassEvidenceRetention"
+    effect    = "Deny"
+    actions   = ["s3:BypassGovernanceRetention"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "evidence" {
+  role   = aws_iam_role.evidence.id
+  policy = data.aws_iam_policy_document.evidence.json
 }

@@ -6,7 +6,7 @@
 |---|---|---|
 | Region A (`us-east-1`) | HTTP API, Lambda, log group/alarm/dashboard, DynamoDB replica/PITR, KMS data key, source S3 bucket | validation session |
 | Region B (`us-west-2`) | HTTP API, Lambda, log group/alarm/dashboard, DynamoDB replica/PITR, KMS data key, replica S3 bucket | validation session |
-| global/shared | Global Table definition, GitHub OIDC roles, recovery state/evidence | validation session |
+| global/shared | Global Table definition and three separated GitHub OIDC roles | validation session |
 | evidence control | ECC KMS signing key and versioned Object-Lock evidence bucket (7-day governance retention) | bucket/key retained through evidence review and key deletion window |
 | corruption drill only | isolated PITR table, quarantine S3 key/version, bounded replay target | temporary; delete after accepted evidence |
 
@@ -45,3 +45,7 @@ session; $10 conservative maximum** including restore, logs/metrics, transfer, c
 price variance. These are guardrails, not a quote. Confirm both selected Regions in AWS Pricing
 Calculator immediately before apply. Stop if the plan adds charge-bearing network/compute resources.
 
+The locked evidence object/version and its primary-region KMS key are intentionally retained for
+seven days. The key must remain enabled until read-back/retention review completes; the encrypted
+object is only a few kilobytes, so retained S3 storage is negligible and the key contributes roughly
+one week of its monthly fixed price. Teardown must not use governance bypass.

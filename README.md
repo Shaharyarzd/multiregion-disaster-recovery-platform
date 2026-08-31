@@ -123,7 +123,8 @@ the local operator flags with controller-collected regional probes.
   [Orchestration](docs/recovery-orchestration.md) · [RTO/RPO](docs/rto-rpo.md)
 - [Reconciliation contract](docs/reconciliation-contract.md) ·
   [AWS validation profile](docs/aws-validation-profile.md) ·
-  [AWS runtime failure review](docs/aws-runtime-failure-review.md)
+  [AWS runtime failure review](docs/aws-runtime-failure-review.md) ·
+  [Milestone 2 preflight](docs/milestone-2-preflight.md)
 - [Security/threat model](docs/security-threat-model.md) ·
   [Runtime evidence](docs/runtime-evidence.md) · [Cost model](docs/cost-model.md)
 - [Production vs demo](docs/production-vs-demo.md) · [Operator runbook](docs/runbook.md) ·

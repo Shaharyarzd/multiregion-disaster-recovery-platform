@@ -1,10 +1,83 @@
-data "aws_caller_identity" "current" {}
+data "aws_caller_identity" "current" { provider = aws.primary }
+
+data "aws_partition" "current" { provider = aws.primary }
+
+data "aws_iam_policy_document" "data_key" {
+  provider = aws.primary
+  statement {
+    sid = "AccountDelegatedDataKeyAdministrationAndUse"
+    actions = [
+      "kms:CancelKeyDeletion",
+      "kms:CreateGrant",
+      "kms:Decrypt",
+      "kms:DescribeKey",
+      "kms:DisableKey",
+      "kms:DisableKeyRotation",
+      "kms:EnableKey",
+      "kms:EnableKeyRotation",
+      "kms:Encrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:GetKeyPolicy",
+      "kms:GetKeyRotationStatus",
+      "kms:ListGrants",
+      "kms:ListKeyPolicies",
+      "kms:ListResourceTags",
+      "kms:PutKeyPolicy",
+      "kms:ReEncryptFrom",
+      "kms:ReEncryptTo",
+      "kms:RevokeGrant",
+      "kms:ScheduleKeyDeletion",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:UpdateKeyDescription",
+    ]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "signing_key" {
+  provider = aws.primary
+  statement {
+    sid = "AccountDelegatedSigningKeyAdministrationAndUse"
+    actions = [
+      "kms:CancelKeyDeletion",
+      "kms:CreateGrant",
+      "kms:DescribeKey",
+      "kms:DisableKey",
+      "kms:EnableKey",
+      "kms:GetKeyPolicy",
+      "kms:GetPublicKey",
+      "kms:ListGrants",
+      "kms:ListKeyPolicies",
+      "kms:ListResourceTags",
+      "kms:PutKeyPolicy",
+      "kms:RevokeGrant",
+      "kms:ScheduleKeyDeletion",
+      "kms:Sign",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:UpdateKeyDescription",
+      "kms:Verify",
+    ]
+    resources = ["*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+}
 
 resource "aws_kms_key" "primary" {
   provider                = aws.primary
   description             = "${var.name} primary-region data key"
   deletion_window_in_days = 30
   enable_key_rotation     = true
+  policy                  = data.aws_iam_policy_document.data_key.json
   tags                    = merge(var.tags, { KeyPurpose = "regional-data" })
 }
 
@@ -19,6 +92,7 @@ resource "aws_kms_key" "secondary" {
   description             = "${var.name} secondary-region data key"
   deletion_window_in_days = 30
   enable_key_rotation     = true
+  policy                  = data.aws_iam_policy_document.data_key.json
   tags                    = merge(var.tags, { KeyPurpose = "regional-data" })
 }
 
@@ -34,6 +108,7 @@ resource "aws_kms_key" "evidence_signing" {
   key_usage                = "SIGN_VERIFY"
   customer_master_key_spec = "ECC_NIST_P256"
   deletion_window_in_days  = 30
+  policy                   = data.aws_iam_policy_document.signing_key.json
   tags                     = merge(var.tags, { KeyPurpose = "evidence-signing" })
 }
 
@@ -185,6 +260,7 @@ resource "aws_s3_bucket_public_access_block" "secondary" {
 }
 
 data "aws_iam_policy_document" "replication_assume" {
+  provider = aws.primary
   statement {
     actions = ["sts:AssumeRole"]
     principals {
@@ -202,6 +278,7 @@ resource "aws_iam_role" "replication" {
 }
 
 data "aws_iam_policy_document" "replication" {
+  provider = aws.primary
   statement {
     sid       = "ReadSourceVersions"
     actions   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]

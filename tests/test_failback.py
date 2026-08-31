@@ -6,7 +6,19 @@ import pytest
 
 from dr_platform.errors import ApprovalRequired, ValidationFailed
 from dr_platform.reconciliation import ConsistencyProof
-from dr_platform.types import RecoveryState, RegionHealth
+from dr_platform.types import RecoveryState, RegionHealth, Transaction
+
+
+class Target:
+    def __init__(self) -> None:
+        self.item = None
+
+    def get(self, _transaction_id):
+        return self.item
+
+    def put_if_absent(self, transaction):
+        self.item = transaction
+        return True
 
 
 def regional(region: str, ok: bool) -> RegionHealth:
@@ -21,7 +33,21 @@ def proof(incident, passed: bool = True, before_promotion: bool = False) -> Cons
 def promoted_incident(declared, comparison, reconciliation):
     orchestrator, incident = declared
     orchestrator.start_recovery(incident, reconciliation.recovery_point)
-    orchestrator.begin_validation(incident, orchestrator.clock())
+    orchestrator.begin_validation(
+        incident,
+        orchestrator.clock(),
+        restore_configuration={
+            "table_active": True,
+            "encryption_verified": True,
+            "pitr_enabled": True,
+            "tags_verified": True,
+            "ttl_verified": True,
+            "stream_verified": True,
+            "no_replicas": True,
+            "deletion_protection": True,
+            "ready_for_validation": True,
+        },
+    )
     orchestrator.record_validation(
         incident,
         comparison,
@@ -32,6 +58,24 @@ def promoted_incident(declared, comparison, reconciliation):
         cross_region_consistency=True,
         synthetic_transaction=True,
         reconciliation=reconciliation,
+    )
+    assert reconciliation.newest_authoritative_transaction is not None
+    post = Transaction(
+        "txn-post",
+        reconciliation.newest_authoritative_transaction,
+        "us-west-2",
+        200,
+        "post",
+    )
+    orchestrator.reconcile(
+        incident,
+        reconciliation,
+        [post],
+        Target(),
+        approved=True,
+        dry_run=False,
+        approver="owner",
+        reference="CHG-REPLAY",
     )
     orchestrator.promote(incident, approved=True, approver="owner", reference="CHG-1")
     return orchestrator, incident

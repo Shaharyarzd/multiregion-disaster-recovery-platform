@@ -1,0 +1,158 @@
+"""Recovery orchestration with automation and explicit approval boundaries."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from datetime import datetime
+from uuid import uuid4
+
+from dr_platform.data_validation import Comparison
+from dr_platform.errors import ApprovalRequired, ValidationFailed
+from dr_platform.health import failback_safe
+from dr_platform.state_machine import RecoveryStateMachine
+from dr_platform.types import (
+    Incident,
+    RecoveryState,
+    RegionHealth,
+    Scenario,
+    ValidationResult,
+    iso,
+    utc_now,
+)
+
+
+class RecoveryOrchestrator:
+    def __init__(self, clock: Callable[[], datetime] = utc_now) -> None:
+        self.clock = clock
+        self.machine = RecoveryStateMachine(clock)
+
+    def declare(
+        self,
+        scenario: Scenario,
+        failure_at: datetime,
+        affected_region: str | None = None,
+    ) -> Incident:
+        now = self.clock()
+        incident = Incident(
+            incident_id=f"dr-{uuid4().hex[:12]}",
+            scenario=scenario,
+            state=RecoveryState.HEALTHY,
+            declared_at=now,
+            failure_at=failure_at,
+            affected_region=affected_region,
+        )
+        return self.machine.transition(
+            incident, RecoveryState.INCIDENT_DECLARED, actor="operator", reason="declared"
+        )
+
+    def start_recovery(
+        self, incident: Incident, recovery_point: datetime | None = None
+    ) -> Incident:
+        incident.recovery_point = recovery_point
+        return self.machine.transition(
+            incident, RecoveryState.RECOVERY_IN_PROGRESS, reason="isolated restore started"
+        )
+
+    def begin_validation(self, incident: Incident, infrastructure_ready_at: datetime) -> Incident:
+        incident.infrastructure_ready_at = infrastructure_ready_at
+        return self.machine.transition(incident, RecoveryState.VALIDATING)
+
+    def record_validation(
+        self,
+        incident: Incident,
+        comparison: Comparison,
+        *,
+        api_health: bool,
+        read_write: bool,
+        freshness: bool,
+        s3_versions: bool,
+        cross_region_consistency: bool,
+        synthetic_transaction: bool,
+    ) -> Incident:
+        incident.record_counts = {
+            "expected": comparison.source_count,
+            "recovered": comparison.recovered_count,
+            "lost": len(comparison.missing_keys),
+            "unexpected": len(comparison.unexpected_keys),
+        }
+        incident.validation = ValidationResult(
+            api_health=api_health,
+            read_write=read_write,
+            record_count=comparison.source_count == comparison.recovered_count,
+            expected_keys=not comparison.missing_keys and not comparison.unexpected_keys,
+            checksum=comparison.source_checksum == comparison.recovered_checksum,
+            freshness=freshness,
+            s3_versions=s3_versions,
+            cross_region_consistency=cross_region_consistency,
+            synthetic_transaction=synthetic_transaction,
+            details={
+                "source_checksum": comparison.source_checksum,
+                "recovered_checksum": comparison.recovered_checksum,
+                "missing_keys": list(comparison.missing_keys),
+                "unexpected_keys": list(comparison.unexpected_keys),
+                "newest_recovered_transaction": iso(comparison.newest_recovered_transaction),
+                "evidence_scope": incident.evidence_scope,
+            },
+        )
+        if not incident.validation.passed:
+            raise ValidationFailed("Recovery remains isolated because validation failed")
+        return self.machine.transition(incident, RecoveryState.AWAITING_APPROVAL)
+
+    def promote(
+        self, incident: Incident, *, approved: bool, approver: str, reference: str
+    ) -> Incident:
+        if not approved or not approver or not reference:
+            raise ApprovalRequired("Promotion requires approver identity and approval reference")
+        incident.approver = approver
+        incident.approval_reference = reference
+        return self.machine.transition(
+            incident,
+            RecoveryState.RECOVERY_ACTIVE,
+            approved=True,
+            actor=approver,
+            reason=reference,
+        )
+
+    def start_failback(
+        self,
+        incident: Incident,
+        *,
+        approved: bool,
+        approver: str,
+        reference: str,
+        original: RegionHealth,
+        survivor: RegionHealth,
+        data_consistent: bool,
+    ) -> Incident:
+        if not failback_safe(original, survivor, data_consistent):
+            raise ValidationFailed("Failback blocked: regional health or data consistency failed")
+        if not approved or not reference:
+            raise ApprovalRequired("Failback requires explicit approval")
+        return self.machine.transition(
+            incident,
+            RecoveryState.FAILBACK_IN_PROGRESS,
+            approved=True,
+            actor=approver,
+            reason=reference,
+        )
+
+    def complete_failback(
+        self,
+        incident: Incident,
+        *,
+        approved: bool,
+        approver: str,
+        reference: str,
+        both_regions_validated: bool,
+    ) -> Incident:
+        if not both_regions_validated:
+            raise ValidationFailed(
+                "Both regions must be validated before active-active restoration"
+            )
+        return self.machine.transition(
+            incident,
+            RecoveryState.HEALTHY,
+            approved=approved,
+            actor=approver,
+            reason=reference,
+        )

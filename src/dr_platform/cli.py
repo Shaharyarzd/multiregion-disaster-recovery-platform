@@ -1,0 +1,197 @@
+"""drctl command line interface."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import TypedDict
+
+from dr_platform.application import MemoryRepository, create_transaction, handler
+from dr_platform.data_validation import Comparison, compare_datasets, measured_rpo_seconds
+from dr_platform.errors import DrError
+from dr_platform.evidence import build_report, write_report
+from dr_platform.orchestrator import RecoveryOrchestrator
+from dr_platform.store import LocalIncidentStore
+from dr_platform.types import RecoveryState, RegionHealth, Scenario, Transaction, utc_now
+
+
+def parse_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(prog="drctl", description="Safe DR recovery controller")
+    result.add_argument("--state-dir", type=Path, default=Path(".drctl"))
+    commands = result.add_subparsers(dest="command", required=True)
+    commands.add_parser("status")
+    commands.add_parser("validate")
+    declare = commands.add_parser("declare")
+    declare.add_argument("--scenario", choices=[item.value for item in Scenario], required=True)
+    declare.add_argument("--failure-time", type=parse_time, required=True)
+    declare.add_argument("--affected-region")
+    recovery = commands.add_parser("recover-data")
+    recovery.add_argument("--recovery-point", type=parse_time)
+    commands.add_parser("validate-recovery")
+    promote = commands.add_parser("promote")
+    promote.add_argument("--approve", action="store_true")
+    promote.add_argument("--approver", required=True)
+    promote.add_argument("--reference", required=True)
+    failback = commands.add_parser("failback")
+    failback.add_argument("--approve", action="store_true")
+    failback.add_argument("--approver", required=True)
+    failback.add_argument("--reference", required=True)
+    failback.add_argument("--phase", choices=["start", "complete"], required=True)
+    failback.add_argument("--both-regions-healthy", action="store_true")
+    failback.add_argument("--data-consistent", action="store_true")
+    report = commands.add_parser("report")
+    report.add_argument("--output", type=Path, default=Path("evidence/recovery-report.json"))
+    return result
+
+
+def synthetic_transactions(now: datetime) -> list[Transaction]:
+    return [
+        Transaction(
+            f"txn-{index:03}",
+            now - timedelta(seconds=3 - index),
+            "region-a",
+            index * 100,
+            f"order-{index}",
+        )
+        for index in range(1, 4)
+    ]
+
+
+class LocalValidationInputs(TypedDict):
+    comparison: Comparison
+    api_health: bool
+    read_write: bool
+    freshness: bool
+    s3_versions: bool
+    cross_region_consistency: bool
+    synthetic_transaction: bool
+
+
+def local_validation_inputs(incident_failure_at: datetime) -> LocalValidationInputs:
+    """Execute local equivalents of the cloud validation gates.
+
+    AWS execution replaces these fixtures with adapter results; evidence scope prevents
+    local results from being represented as cloud observations.
+    """
+    repository = MemoryRepository()
+    health_response = handler(
+        {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/health"},
+        None,
+        repository,
+    )
+    created = create_transaction(
+        repository,
+        seed="post-recovery-proof",
+        timestamp=utc_now(),
+        region="local-region-a",
+        amount_cents=123,
+    )
+    read_back = repository.get(created["transaction_id"])
+
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads(
+        (root / "examples/supporting-data/manifest.json").read_text(encoding="utf-8")
+    )
+    manifest_item = manifest["objects"][0]
+    object_path = root / "examples" / manifest_item["key"]
+    object_checksum = hashlib.sha256(object_path.read_bytes()).hexdigest()
+    s3_fixture_valid = object_checksum == manifest_item["sha256"]
+
+    expected = synthetic_transactions(incident_failure_at)
+    recovered = list(expected)
+    comparison = compare_datasets(expected, recovered)
+    replica_comparison = compare_datasets(recovered, list(recovered))
+    newest = comparison.newest_recovered_transaction
+    freshness = bool(newest and measured_rpo_seconds(incident_failure_at, newest) <= 60)
+    return {
+        "comparison": comparison,
+        "api_health": health_response["statusCode"] == 200,
+        "read_write": read_back == created,
+        "freshness": freshness,
+        "s3_versions": s3_fixture_valid,
+        "cross_region_consistency": replica_comparison.exact_match,
+        "synthetic_transaction": read_back is not None,
+    }
+
+
+def execute(args: argparse.Namespace) -> dict[str, object]:
+    store = LocalIncidentStore(args.state_dir)
+    orchestrator = RecoveryOrchestrator()
+    if args.command == "declare":
+        incident = orchestrator.declare(
+            Scenario(args.scenario), args.failure_time, args.affected_region
+        )
+        store.save(incident)
+        return {"incident_id": incident.incident_id, "state": incident.state.value}
+    incident = store.load()
+    if args.command == "status":
+        return build_report(incident)
+    if args.command == "validate":
+        return {"state_file": str(store.path), "readable": True, "state": incident.state.value}
+    if args.command == "recover-data":
+        orchestrator.start_recovery(incident, args.recovery_point)
+    elif args.command == "validate-recovery":
+        if incident.state is RecoveryState.RECOVERY_IN_PROGRESS:
+            orchestrator.begin_validation(incident, utc_now())
+        validation = local_validation_inputs(incident.failure_at)
+        orchestrator.record_validation(incident, **validation)
+    elif args.command == "promote":
+        orchestrator.promote(
+            incident,
+            approved=args.approve,
+            approver=args.approver,
+            reference=args.reference,
+        )
+    elif args.command == "failback":
+        health = RegionHealth(
+            "both-regions",
+            args.both_regions_healthy,
+            args.both_regions_healthy,
+            args.both_regions_healthy,
+            utc_now(),
+            "operator-supplied local simulation evidence",
+        )
+        if args.phase == "start":
+            orchestrator.start_failback(
+                incident,
+                approved=args.approve,
+                approver=args.approver,
+                reference=args.reference,
+                original=health,
+                survivor=health,
+                data_consistent=args.data_consistent,
+            )
+        else:
+            orchestrator.complete_failback(
+                incident,
+                approved=args.approve,
+                approver=args.approver,
+                reference=args.reference,
+                both_regions_validated=(args.both_regions_healthy and args.data_consistent),
+            )
+    elif args.command == "report":
+        return write_report(incident, args.output)
+    store.save(incident)
+    return {"incident_id": incident.incident_id, "state": incident.state.value}
+
+
+def main() -> None:
+    args = parser().parse_args()
+    try:
+        print(json.dumps(execute(args), indent=2, sort_keys=True))
+    except (DrError, FileNotFoundError, ValueError) as error:
+        print(json.dumps({"error": str(error)}, sort_keys=True), file=sys.stderr)
+        raise SystemExit(2) from error
+
+
+if __name__ == "__main__":
+    main()

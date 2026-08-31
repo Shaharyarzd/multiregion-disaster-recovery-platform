@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "objects": [
+    {
+      "key": "supporting-data/order-001.json",
+      "sha256": "76ce3612762e9d3208d40439b0b3472b617caf71152b9dad955efe7f970f8116",
+      "classification": "SYNTHETIC_PUBLIC"
+    }
+  ]
+}

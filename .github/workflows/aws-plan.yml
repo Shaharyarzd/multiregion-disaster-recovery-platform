@@ -1,0 +1,38 @@
+name: Owner-authorized AWS plan
+
+on:
+  workflow_dispatch:
+    inputs:
+      stack:
+        description: Stack to plan
+        required: true
+        type: choice
+        options: [bootstrap, global, region-a, region-b]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  plan:
+    environment: aws-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_PRIMARY_REGION }}
+      - name: Initialize selected state boundary
+        working-directory: terraform/stacks/${{ inputs.stack }}
+        run: terraform init -input=false
+      - name: Plan only
+        working-directory: terraform/stacks/${{ inputs.stack }}
+        run: terraform plan -input=false -out=tfplan
+
+      # Applying is intentionally absent. An owner reviews the plan and performs a
+      # separate authorized deployment; recovery actions use another environment/role.
+

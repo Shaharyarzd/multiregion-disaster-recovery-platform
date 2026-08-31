@@ -36,21 +36,78 @@ resource "aws_iam_role" "deploy" {
 
 data "aws_iam_policy_document" "deploy" {
   statement {
-    sid = "ManagePortfolioRuntimeOnly"
+    sid = "ManagePortfolioLambda"
     actions = [
-      "apigateway:*",
-      "lambda:*",
-      "logs:*",
-      "cloudwatch:*",
-      "dynamodb:DescribeTable",
-      "dynamodb:UpdateTable",
-      "s3:GetBucket*",
-      "s3:ListBucket",
-      "kms:DescribeKey",
-      "iam:GetRole",
-      "iam:PassRole",
+      "lambda:AddPermission",
+      "lambda:CreateFunction",
+      "lambda:DeleteFunction",
+      "lambda:GetFunction",
+      "lambda:GetFunctionCodeSigningConfig",
+      "lambda:GetPolicy",
+      "lambda:ListVersionsByFunction",
+      "lambda:RemovePermission",
+      "lambda:TagResource",
+      "lambda:UntagResource",
+      "lambda:UpdateFunctionCode",
+      "lambda:UpdateFunctionConfiguration",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:*:*:${data.aws_caller_identity.current.account_id}:*"]
+    resources = ["arn:${data.aws_partition.current.partition}:lambda:*:${data.aws_caller_identity.current.account_id}:function:${var.resource_prefix}-*"]
+  }
+  statement {
+    sid       = "ManagePortfolioHttpApis"
+    actions   = ["apigateway:DELETE", "apigateway:GET", "apigateway:PATCH", "apigateway:POST", "apigateway:PUT"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis*"]
+  }
+  statement {
+    sid = "ManagePortfolioRuntimeObservability"
+    actions = [
+      "cloudwatch:DeleteAlarms",
+      "cloudwatch:DeleteDashboards",
+      "cloudwatch:DescribeAlarms",
+      "cloudwatch:GetDashboard",
+      "cloudwatch:PutDashboard",
+      "cloudwatch:PutMetricAlarm",
+      "logs:CreateLogGroup",
+      "logs:DeleteLogGroup",
+      "logs:DescribeLogGroups",
+      "logs:ListTagsForResource",
+      "logs:PutRetentionPolicy",
+      "logs:TagResource",
+      "logs:UntagResource",
+    ]
+    resources = ["*"]
+  }
+  statement {
+    sid = "ManagePortfolioLambdaRoles"
+    actions = [
+      "iam:CreateRole",
+      "iam:DeleteRole",
+      "iam:DeleteRolePolicy",
+      "iam:GetRole",
+      "iam:GetRolePolicy",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListRolePolicies",
+      "iam:PutRolePolicy",
+      "iam:TagRole",
+      "iam:UntagRole",
+      "iam:UpdateAssumeRolePolicy",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-*"]
+  }
+  statement {
+    sid       = "PassOnlyPortfolioLambdaRoles"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-*"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["lambda.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "ReadSharedRuntimeDependencies"
+    actions   = ["dynamodb:DescribeTable", "kms:DescribeKey", "s3:GetBucketLocation", "s3:ListBucket"]
+    resources = ["*"]
   }
   statement {
     sid       = "DenyRecoveryPromotion"
@@ -107,9 +164,48 @@ data "aws_iam_policy_document" "recovery" {
     ]
   }
   statement {
-    sid       = "RecoverVersionedObjects"
-    actions   = ["s3:GetObjectVersion", "s3:ListBucketVersions", "s3:PutObject"]
+    sid       = "ReplayOnlyToIsolatedRecoveryTargets"
+    actions   = ["dynamodb:BatchWriteItem", "dynamodb:PutItem"]
+    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
+  }
+  statement {
+    sid = "RecoverVersionedObjects"
+    actions = [
+      "s3:GetObjectVersion",
+      "s3:ListBucketVersions",
+      "s3:PutObject",
+      "s3:PutObjectRetention",
+    ]
     resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*"]
+  }
+  statement {
+    sid       = "SignEvidenceWithProjectKey"
+    actions   = ["kms:Sign", "kms:GetPublicKey", "kms:DescribeKey"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.resource_prefix]
+    }
+  }
+  statement {
+    sid       = "UseProjectDataKeysForRecovery"
+    actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:*:${data.aws_caller_identity.current.account_id}:key/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceTag/Project"
+      values   = [var.resource_prefix]
+    }
+  }
+  statement {
+    sid = "ReadRecoverySignals"
+    actions = [
+      "cloudwatch:GetMetricData",
+      "cloudwatch:GetMetricStatistics",
+      "cloudwatch:ListMetrics",
+    ]
+    resources = ["*"]
   }
   statement {
     sid       = "EmitEvidenceMetrics"
@@ -127,4 +223,3 @@ resource "aws_iam_role_policy" "recovery" {
   role   = aws_iam_role.recovery.id
   policy = data.aws_iam_policy_document.recovery.json
 }
-

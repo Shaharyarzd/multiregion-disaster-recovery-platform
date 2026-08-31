@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 
-from dr_platform.types import Transaction
+from dr_platform.types import Transaction, normalize_utc
 
 
 @dataclass(frozen=True)
@@ -61,12 +61,13 @@ def compare_datasets(
 def choose_recovery_point(
     available_points: Iterable[datetime], corruption_time: datetime, safety_margin_seconds: int = 1
 ) -> datetime:
+    corruption_time = normalize_utc(corruption_time)
     if safety_margin_seconds < 0:
         raise ValueError("safety_margin_seconds cannot be negative")
     eligible = [
         point
         for point in available_points
-        if (corruption_time - point).total_seconds() >= safety_margin_seconds
+        if (corruption_time - normalize_utc(point)).total_seconds() >= safety_margin_seconds
     ]
     if not eligible:
         raise ValueError("No safe recovery point exists before corruption")
@@ -74,14 +75,14 @@ def choose_recovery_point(
 
 
 def measured_rto_seconds(incident_time: datetime, service_recovery_time: datetime) -> float:
-    result = (service_recovery_time - incident_time).total_seconds()
+    result = (normalize_utc(service_recovery_time) - normalize_utc(incident_time)).total_seconds()
     if result < 0:
         raise ValueError("service recovery cannot precede incident declaration")
     return result
 
 
 def measured_rpo_seconds(failure_time: datetime, newest_recovered: datetime) -> float:
-    result = (failure_time - newest_recovered).total_seconds()
+    result = (normalize_utc(failure_time) - normalize_utc(newest_recovered)).total_seconds()
     if result < 0:
         raise ValueError("newest recovered transaction cannot be after the failure")
     return result

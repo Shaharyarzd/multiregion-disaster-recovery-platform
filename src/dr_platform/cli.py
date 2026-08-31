@@ -15,6 +15,11 @@ from dr_platform.data_validation import Comparison, compare_datasets, measured_r
 from dr_platform.errors import DrError
 from dr_platform.evidence import build_report, write_report
 from dr_platform.orchestrator import RecoveryOrchestrator
+from dr_platform.reconciliation import (
+    ConsistencyProof,
+    ReconciliationPlan,
+    plan_reconciliation,
+)
 from dr_platform.store import LocalIncidentStore
 from dr_platform.types import RecoveryState, RegionHealth, Scenario, Transaction, utc_now
 
@@ -74,9 +79,12 @@ class LocalValidationInputs(TypedDict):
     s3_versions: bool
     cross_region_consistency: bool
     synthetic_transaction: bool
+    reconciliation: ReconciliationPlan
 
 
-def local_validation_inputs(incident_failure_at: datetime) -> LocalValidationInputs:
+def local_validation_inputs(
+    incident_failure_at: datetime, recovery_point: datetime
+) -> LocalValidationInputs:
     """Execute local equivalents of the cloud validation gates.
 
     AWS execution replaces these fixtures with adapter results; evidence scope prevents
@@ -106,11 +114,15 @@ def local_validation_inputs(incident_failure_at: datetime) -> LocalValidationInp
     object_checksum = hashlib.sha256(object_path.read_bytes()).hexdigest()
     s3_fixture_valid = object_checksum == manifest_item["sha256"]
 
-    expected = synthetic_transactions(incident_failure_at)
+    live = synthetic_transactions(incident_failure_at)
+    expected = [item for item in live if item.timestamp <= recovery_point]
     recovered = list(expected)
     comparison = compare_datasets(expected, recovered)
     replica_comparison = compare_datasets(recovered, list(recovered))
-    newest = comparison.newest_recovered_transaction
+    reconciliation = plan_reconciliation(
+        recovered, live, recovery_point, incident_failure_at, set()
+    )
+    newest = reconciliation.newest_authoritative_transaction
     freshness = bool(newest and measured_rpo_seconds(incident_failure_at, newest) <= 60)
     return {
         "comparison": comparison,
@@ -120,6 +132,7 @@ def local_validation_inputs(incident_failure_at: datetime) -> LocalValidationInp
         "s3_versions": s3_fixture_valid,
         "cross_region_consistency": replica_comparison.exact_match,
         "synthetic_transaction": read_back is not None,
+        "reconciliation": reconciliation,
     }
 
 
@@ -142,7 +155,9 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
     elif args.command == "validate-recovery":
         if incident.state is RecoveryState.RECOVERY_IN_PROGRESS:
             orchestrator.begin_validation(incident, utc_now())
-        validation = local_validation_inputs(incident.failure_at)
+        if incident.recovery_point is None:
+            raise DrError("Recovery point is required before validation")
+        validation = local_validation_inputs(incident.failure_at, incident.recovery_point)
         orchestrator.record_validation(incident, **validation)
     elif args.command == "promote":
         orchestrator.promote(
@@ -161,6 +176,14 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
             "operator-supplied local simulation evidence",
         )
         if args.phase == "start":
+            proof = ConsistencyProof(
+                checked_at=utc_now(),
+                exact_key_match=args.data_consistent,
+                exact_checksum_match=args.data_consistent,
+                no_pending_replay=args.data_consistent,
+                replication_lag_seconds=0.0,
+                maximum_allowed_lag_seconds=5.0,
+            )
             orchestrator.start_failback(
                 incident,
                 approved=args.approve,
@@ -168,7 +191,7 @@ def execute(args: argparse.Namespace) -> dict[str, object]:
                 reference=args.reference,
                 original=health,
                 survivor=health,
-                data_consistent=args.data_consistent,
+                consistency_proof=proof,
             )
         else:
             orchestrator.complete_failback(

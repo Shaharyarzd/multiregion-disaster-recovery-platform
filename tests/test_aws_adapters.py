@@ -4,7 +4,14 @@ import sys
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from dr_platform.aws_adapters import DynamoRecoveryAdapter, S3RecoveryAdapter
+from dr_platform.aws_adapters import (
+    CloudWatchEvidenceEmitter,
+    DynamoRecoveryAdapter,
+    EvidenceArchiveAdapter,
+    KmsEvidenceSigner,
+    S3RecoveryAdapter,
+)
+from dr_platform.observability import MetricDatum
 
 
 class FakeClient:
@@ -25,6 +32,21 @@ class FakeClient:
 
     def copy_object(self, **kwargs):
         self.calls.append(("copy", kwargs))
+
+    def put_metric_data(self, **kwargs):
+        self.calls.append(("metrics", kwargs))
+
+    def sign(self, **kwargs):
+        self.calls.append(("sign", kwargs))
+        return {"Signature": b"signed"}
+
+    def verify(self, **kwargs):
+        self.calls.append(("verify", kwargs))
+        return {"SignatureValid": True}
+
+    def put_object(self, **kwargs):
+        self.calls.append(("archive", kwargs))
+        return {"VersionId": "evidence-v1"}
 
 
 def install_fake_boto3(monkeypatch):
@@ -55,3 +77,21 @@ def test_s3_adapter_recovers_to_quarantine(monkeypatch) -> None:
     copy = clients["s3"].calls[-1][1]
     assert copy["Bucket"] == "quarantine"
     assert copy["CopySource"]["VersionId"] == "v1"
+
+
+def test_cloudwatch_kms_and_archive_adapters(monkeypatch) -> None:
+    clients = install_fake_boto3(monkeypatch)
+    metric = MetricDatum("RegionHealthy", 1.0, "Count", datetime.now(UTC), {"RunId": "r"})
+    CloudWatchEvidenceEmitter("us-east-1").emit([metric])
+    assert clients["cloudwatch"].calls[-1][0] == "metrics"
+
+    signature = KmsEvidenceSigner("us-east-1", "key-1").sign_digest("00" * 32)
+    assert signature["algorithm"] == "ECDSA_SHA_256"
+    assert clients["kms"].calls[-1][1]["MessageType"] == "DIGEST"
+    assert KmsEvidenceSigner("us-east-1", "key-1").verify_digest("00" * 32, signature)
+
+    version = EvidenceArchiveAdapter("us-east-1").archive(
+        "evidence-bucket", "runs/r/report.json", b"{}"
+    )
+    assert version == "evidence-v1"
+    assert clients["s3"].calls[-1][1]["ObjectLockMode"] == "GOVERNANCE"

@@ -7,13 +7,21 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from dr_platform.errors import EvidenceIntegrityError
+
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise EvidenceIntegrityError("Naive timestamps are forbidden; supply timezone-aware UTC")
+    return value.astimezone(UTC)
+
+
 def iso(value: datetime | None) -> str | None:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z") if value else None
+    return normalize_utc(value).isoformat().replace("+00:00", "Z") if value else None
 
 
 class RecoveryState(StrEnum):
@@ -117,3 +125,12 @@ class Incident:
     record_counts: dict[str, int] = field(default_factory=dict)
     event_log: list[dict[str, Any]] = field(default_factory=list)
     evidence_scope: str = "LOCAL_SIMULATION"
+    run_id: str = ""
+    scenario_id: str = ""
+    timestamp_sources: dict[str, str] = field(default_factory=dict)
+    clock_skew_ms_observed: float | None = None
+    clock_skew_ms_limit: float = 1000.0
+    restore_completed_at: datetime | None = None
+    validation_started_at: datetime | None = None
+    rto_end_at: datetime | None = None
+    reconciliation: dict[str, Any] | None = None

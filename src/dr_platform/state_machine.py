@@ -6,7 +6,8 @@ from collections.abc import Callable
 from datetime import datetime
 
 from dr_platform.errors import ApprovalRequired, InvalidTransition, ValidationFailed
-from dr_platform.types import Incident, RecoveryState, utc_now
+from dr_platform.integrity import GENESIS_HASH, chained_event
+from dr_platform.types import Incident, RecoveryState, normalize_utc, utc_now
 
 Clock = Callable[[], datetime]
 
@@ -54,25 +55,37 @@ class RecoveryStateMachine:
         if (source, target) in APPROVAL_TRANSITIONS and not approved:
             raise ApprovalRequired(f"Transition {source} -> {target} requires explicit approval")
 
-        changed_at = self.clock()
+        changed_at = normalize_utc(self.clock())
         incident.state = target
+        previous_hash = (
+            str(incident.event_log[-1]["event_hash"]) if incident.event_log else GENESIS_HASH
+        )
         incident.event_log.append(
-            {
-                "from": source.value,
-                "to": target.value,
-                "at": changed_at.isoformat(),
-                "actor": actor,
-                "reason": reason,
-                "approved": approved,
-            }
+            chained_event(
+                {
+                    "from": source.value,
+                    "to": target.value,
+                    "at": changed_at.isoformat(),
+                    "actor": actor,
+                    "reason": reason,
+                    "approved": approved,
+                },
+                previous_hash,
+                len(incident.event_log) + 1,
+            )
         )
         if target is RecoveryState.RECOVERY_IN_PROGRESS and incident.recovery_started_at is None:
             incident.recovery_started_at = changed_at
+        elif target is RecoveryState.VALIDATING:
+            incident.validation_started_at = changed_at
         elif target is RecoveryState.AWAITING_APPROVAL:
             incident.validation_completed_at = changed_at
             incident.approval_status = "PENDING"
+            if incident.scenario.value == "regional-outage":
+                incident.rto_end_at = changed_at
         elif target is RecoveryState.RECOVERY_ACTIVE:
             incident.promotion_at = changed_at
+            incident.rto_end_at = changed_at
             incident.approval_status = "APPROVED"
         elif target is RecoveryState.HEALTHY:
             incident.failback_completed_at = changed_at

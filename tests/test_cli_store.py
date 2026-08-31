@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -38,7 +38,7 @@ def test_cli_drill_and_store_round_trip(tmp_path) -> None:
     assert declared["state"] == RecoveryState.INCIDENT_DECLARED.value
     assert execute(args(tmp_path, "validate"))["readable"] is True
 
-    execute(args(tmp_path, "recover-data", recovery_point=failure))
+    execute(args(tmp_path, "recover-data", recovery_point=failure - timedelta(seconds=1)))
     execute(args(tmp_path, "validate-recovery"))
     promoted = execute(
         args(
@@ -100,7 +100,7 @@ def test_cli_completes_controlled_failback(tmp_path) -> None:
             affected_region="us-east-1",
         )
     )
-    execute(args(tmp_path, "recover-data", recovery_point=failure))
+    execute(args(tmp_path, "recover-data", recovery_point=failure - timedelta(seconds=1)))
     execute(args(tmp_path, "validate-recovery"))
     execute(
         args(

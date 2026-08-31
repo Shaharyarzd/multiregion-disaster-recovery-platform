@@ -144,9 +144,12 @@ resource "aws_cloudwatch_dashboard" "dr" {
           [".", "MeasuredRPOSeconds", ".", "."],
           [".", "RecoveryValidationPassed", ".", "."],
           [".", "LastSuccessfulDrDrillEpoch", ".", "."],
+          [".", "RecoveryState", "RunId", "CURRENT_RUN"],
+          [".", "RestoreDurationSeconds", ".", "."],
+          [".", "RecoveryFailure", ".", "."],
+          ["AWS/DynamoDB", "ReplicationLatency", "TableName", var.table_name, "ReceivingRegion", var.region],
         ]
       }
     }]
   })
 }
-

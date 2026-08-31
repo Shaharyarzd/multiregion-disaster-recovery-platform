@@ -1,8 +1,10 @@
 # Runtime evidence
 
-`drctl report` emits `evidence/recovery-report.json`. Values come from the incident event log and
-validation result; `validation_result` is computed and cannot be passed as a CLI value. Sensitive-
-looking fields are recursively redacted.
+`drctl report` emits schema `com.portfolio.dr.recovery-report/2.0.0`. It includes run/scenario IDs,
+timestamp authorities, raw RTO/RPO inputs, derived values, reconciliation, approvals, promotion and
+failback state. Events form a SHA-256 previous-hash chain; the canonical report body has its own
+SHA-256. `verify_report` detects edits. A local file is explicitly `UNSIGNED` and
+`NOT_PROVIDED_BY_LOCAL_FILE`; hashing is tamper-evidence, not immutability.
 
 | Field | Evidence source |
 |---|---|
@@ -15,8 +17,12 @@ looking fields are recursively redacted.
 | counts/checksums/newest transaction | reads from expected and isolated recovered datasets |
 | S3 checks | version lists, checksums, replica status, quarantine read |
 
-Local evidence proves only controller behavior. It must carry `evidence_source: generated-by-drctl`
-and `evidence_scope: LOCAL_SIMULATION`. It is not an AWS runtime PASS. AWS evidence should additionally include
+Local evidence proves only controller behavior and carries `LOCAL_SIMULATION`. `AWS_RUNTIME` refuses
+generation without an evidence signer, a passing clock-skew observation, and allow-listed synced
+controller/fault-injector/AWS/DynamoDB timestamp authorities; a raw synthetic payload time is not
+accepted as authority. AWS evidence uses
+the ECC KMS signer and Object-Lock archive adapter; signature verification, bucket retention, and
+archive durability remain **PENDING AWS** until executed. AWS evidence should additionally include
 CloudWatch query IDs/metric timestamps, request IDs, table/bucket ARNs, object version IDs, and
 signed workflow/run references after redaction.
 

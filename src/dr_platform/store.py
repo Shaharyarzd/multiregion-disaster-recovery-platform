@@ -37,6 +37,9 @@ class LocalIncidentStore:
             "validation_completed_at",
             "promotion_at",
             "failback_completed_at",
+            "restore_completed_at",
+            "validation_started_at",
+            "rto_end_at",
         }
         for key in datetime_fields:
             if raw.get(key):

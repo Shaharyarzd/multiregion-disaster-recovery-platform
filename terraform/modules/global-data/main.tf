@@ -5,7 +5,7 @@ resource "aws_kms_key" "primary" {
   description             = "${var.name} primary-region data key"
   deletion_window_in_days = 30
   enable_key_rotation     = true
-  tags                    = var.tags
+  tags                    = merge(var.tags, { KeyPurpose = "regional-data" })
 }
 
 resource "aws_kms_alias" "primary" {
@@ -19,13 +19,22 @@ resource "aws_kms_key" "secondary" {
   description             = "${var.name} secondary-region data key"
   deletion_window_in_days = 30
   enable_key_rotation     = true
-  tags                    = var.tags
+  tags                    = merge(var.tags, { KeyPurpose = "regional-data" })
 }
 
 resource "aws_kms_alias" "secondary" {
   provider      = aws.secondary
   name          = "alias/${var.name}-secondary"
   target_key_id = aws_kms_key.secondary.key_id
+}
+
+resource "aws_kms_key" "evidence_signing" {
+  provider                 = aws.primary
+  description              = "${var.name} recovery evidence signing key"
+  key_usage                = "SIGN_VERIFY"
+  customer_master_key_spec = "ECC_NIST_P256"
+  deletion_window_in_days  = 30
+  tags                     = merge(var.tags, { KeyPurpose = "evidence-signing" })
 }
 
 resource "aws_dynamodb_table" "transactions" {
@@ -73,6 +82,52 @@ resource "aws_s3_bucket" "secondary" {
   provider = aws.secondary
   bucket   = "${var.name}-${data.aws_caller_identity.current.account_id}-${var.secondary_region}"
   tags     = var.tags
+}
+
+resource "aws_s3_bucket" "evidence" {
+  provider            = aws.primary
+  bucket              = "${var.name}-${data.aws_caller_identity.current.account_id}-evidence"
+  object_lock_enabled = true
+  tags                = var.tags
+}
+
+resource "aws_s3_bucket_versioning" "evidence" {
+  provider = aws.primary
+  bucket   = aws_s3_bucket.evidence.id
+  versioning_configuration { status = "Enabled" }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "evidence" {
+  provider = aws.primary
+  bucket   = aws_s3_bucket.evidence.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = aws_kms_key.primary.arn
+      sse_algorithm     = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "evidence" {
+  provider                = aws.primary
+  bucket                  = aws_s3_bucket.evidence.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "evidence" {
+  provider = aws.primary
+  bucket   = aws_s3_bucket.evidence.id
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = 7
+    }
+  }
+  depends_on = [aws_s3_bucket_versioning.evidence]
 }
 
 resource "aws_s3_bucket_versioning" "primary" {
@@ -204,4 +259,3 @@ resource "aws_s3_bucket_replication_configuration" "primary_to_secondary" {
     delete_marker_replication { status = "Disabled" }
   }
 }
-

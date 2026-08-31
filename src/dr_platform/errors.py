@@ -15,3 +15,7 @@ class ValidationFailed(DrError):
 
 class ApprovalRequired(DrError):
     """A material transition lacks independent approval evidence."""
+
+
+class EvidenceIntegrityError(DrError):
+    """Evidence inputs or integrity verification are invalid."""

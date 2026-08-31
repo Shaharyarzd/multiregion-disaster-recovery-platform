@@ -11,6 +11,7 @@ from dr_platform.data_validation import (
     measured_rpo_seconds,
     measured_rto_seconds,
 )
+from dr_platform.errors import EvidenceIntegrityError
 from dr_platform.types import Transaction
 
 
@@ -65,3 +66,18 @@ def test_rpo_rejects_transaction_after_failure() -> None:
     now = datetime(2026, 1, 1, tzinfo=UTC)
     with pytest.raises(ValueError):
         measured_rpo_seconds(now, now + timedelta(seconds=1))
+
+
+def test_naive_timestamps_are_rejected() -> None:
+    naive = datetime(2026, 1, 1)
+    aware = datetime(2026, 1, 1, tzinfo=UTC)
+    with pytest.raises(EvidenceIntegrityError, match="Naive timestamps"):
+        measured_rto_seconds(naive, aware)
+
+
+def test_out_of_order_records_do_not_change_newest_recovered() -> None:
+    result = compare_datasets(
+        [transaction("a", 1), transaction("b", 2)],
+        [transaction("b", 2), transaction("a", 1)],
+    )
+    assert result.newest_recovered_transaction == transaction("b", 2).timestamp

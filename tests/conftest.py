@@ -6,7 +6,8 @@ import pytest
 
 from dr_platform.data_validation import Comparison
 from dr_platform.orchestrator import RecoveryOrchestrator
-from dr_platform.types import Incident, Scenario
+from dr_platform.reconciliation import ReconciliationPlan, plan_reconciliation
+from dr_platform.types import Incident, Scenario, Transaction
 
 
 class Clock:
@@ -38,3 +39,13 @@ def declared(clock: Clock) -> tuple[RecoveryOrchestrator, Incident]:
         "us-east-1",
     )
     return orchestrator, incident
+
+
+@pytest.fixture
+def reconciliation() -> ReconciliationPlan:
+    point = datetime(2025, 12, 31, 23, 59, 55, tzinfo=UTC)
+    base = Transaction("txn-base", point, "us-east-1", 100, "base")
+    post = Transaction(
+        "txn-post", datetime(2025, 12, 31, 23, 59, 59, tzinfo=UTC), "us-west-2", 200, "post"
+    )
+    return plan_reconciliation([base], [base, post], point, datetime(2026, 1, 1, tzinfo=UTC), set())

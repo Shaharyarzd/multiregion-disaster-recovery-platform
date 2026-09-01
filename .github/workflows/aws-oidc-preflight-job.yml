@@ -1,0 +1,65 @@
+name: AWS OIDC environment proof
+
+on:
+  workflow_call:
+    inputs:
+      environment_name:
+        required: true
+        type: string
+      expected_sub:
+        required: true
+        type: string
+      role_arn:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  prove:
+    environment: ${{ inputs.environment_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate OIDC audience and subject
+        env:
+          EXPECTED_SUB: ${{ inputs.expected_sub }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          oidc_response="$(curl --fail --silent --show-error \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com")"
+          OIDC_JWT="$(jq -er '.value' <<<"${oidc_response}")"
+          export OIDC_JWT EXPECTED_SUB
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+
+          payload = os.environ["OIDC_JWT"].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          expected_sub = os.environ["EXPECTED_SUB"]
+          assert claims["aud"] == "sts.amazonaws.com", claims["aud"]
+          assert claims["sub"] == expected_sub, claims["sub"]
+          print(json.dumps({"aud": claims["aud"], "sub": claims["sub"]}, sort_keys=True))
+          PY
+          unset OIDC_JWT oidc_response
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.role_arn }}
+          aws-region: us-east-1
+
+      - name: Prove AWS role session
+        env:
+          EXPECTED_ROLE_ARN: ${{ inputs.role_arn }}
+        run: |
+          set -euo pipefail
+          actual_arn="$(aws sts get-caller-identity --query Arn --output text)"
+          expected_role_name="${EXPECTED_ROLE_ARN##*/}"
+          expected_prefix="arn:aws:sts::293951765338:assumed-role/${expected_role_name}/"
+          [[ "${actual_arn}" == "${expected_prefix}"* ]]
+          jq -n --arg arn "${actual_arn}" '{arn: $arn}'

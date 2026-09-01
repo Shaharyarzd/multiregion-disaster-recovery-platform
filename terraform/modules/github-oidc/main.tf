@@ -1,19 +1,12 @@
 data "aws_caller_identity" "current" {}
 data "aws_partition" "current" {}
 
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-  tags            = var.tags
-}
-
 data "aws_iam_policy_document" "deploy_assume" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [var.github_oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
@@ -140,6 +133,16 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
   statement {
+    sid       = "PassOnlyPortfolioS3ReplicationRole"
+    actions   = ["iam:PassRole"]
+    resources = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-s3-replication"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["s3.amazonaws.com"]
+    }
+  }
+  statement {
     sid       = "ReadSharedRuntimeDependencies"
     actions   = ["dynamodb:DescribeTable", "kms:DescribeKey", "s3:GetBucketLocation", "s3:ListBucket"]
     resources = ["*"]
@@ -148,46 +151,57 @@ data "aws_iam_policy_document" "deploy" {
     sid = "ManageProjectDynamoInfrastructure"
     actions = [
       "dynamodb:CreateTable",
+      "dynamodb:CreateTableReplica",
+      "dynamodb:BatchWriteItem",
       "dynamodb:DeleteTable",
+      "dynamodb:DeleteItem",
       "dynamodb:DescribeContinuousBackups",
       "dynamodb:DescribeTable",
+      "dynamodb:GetItem",
       "dynamodb:ListTagsOfResource",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
       "dynamodb:TagResource",
       "dynamodb:UntagResource",
       "dynamodb:UpdateContinuousBackups",
+      "dynamodb:UpdateItem",
       "dynamodb:UpdateTable",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.primary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*",
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*",
+    ]
   }
   statement {
-    sid = "ManageProjectS3Infrastructure"
+    sid = "ManageProjectS3Buckets"
     actions = [
       "s3:CreateBucket",
       "s3:DeleteBucket",
       "s3:DeleteBucketPolicy",
-      "s3:DeleteObject",
-      "s3:DeleteObjectVersion",
-      "s3:GetBucketEncryption",
+      "s3:GetEncryptionConfiguration",
       "s3:GetBucketObjectLockConfiguration",
       "s3:GetBucketPolicy",
       "s3:GetBucketPublicAccessBlock",
-      "s3:GetBucketReplication",
+      "s3:GetReplicationConfiguration",
       "s3:GetBucketTagging",
       "s3:GetBucketVersioning",
       "s3:ListBucket",
       "s3:ListBucketVersions",
-      "s3:PutBucketEncryption",
+      "s3:PutEncryptionConfiguration",
       "s3:PutBucketObjectLockConfiguration",
       "s3:PutBucketPolicy",
       "s3:PutBucketPublicAccessBlock",
-      "s3:PutBucketReplication",
+      "s3:PutReplicationConfiguration",
       "s3:PutBucketTagging",
       "s3:PutBucketVersioning",
     ]
-    resources = [
-      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*",
-      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*/*",
-    ]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*"]
+  }
+  statement {
+    sid       = "DeleteProjectS3Objects"
+    actions   = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*/*"]
   }
   statement {
     sid       = "CreateTaggedProjectKmsKeys"
@@ -271,7 +285,7 @@ data "aws_iam_policy_document" "recovery_assume" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [var.github_oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
@@ -310,7 +324,7 @@ data "aws_iam_policy_document" "recovery" {
       "dynamodb:DescribeTimeToLive",
     ]
     resources = [
-      "arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}*"
+      "arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*"
     ]
   }
   statement {
@@ -319,15 +333,19 @@ data "aws_iam_policy_document" "recovery" {
     resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
   }
   statement {
+    sid       = "ListVersionedRecoveryBuckets"
+    actions   = ["s3:ListBucketVersions"]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*"]
+  }
+  statement {
     sid = "RecoverVersionedObjects"
     actions = [
       "s3:GetObjectVersion",
       "s3:GetObject",
-      "s3:ListBucketVersions",
       "s3:PutObject",
       "s3:DeleteObject",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*"]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*/*"]
   }
   statement {
     sid       = "DeleteOnlyIsolatedRecoveryTargets"
@@ -375,7 +393,7 @@ data "aws_iam_policy_document" "evidence_assume" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [var.github_oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
@@ -419,8 +437,8 @@ data "aws_iam_policy_document" "evidence" {
       "s3:PutObjectRetention",
     ]
     resources = [
-      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*-evidence",
-      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}*-evidence/evidence/*",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*-evidence",
+      "arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*-evidence/evidence/*",
     ]
   }
   statement {

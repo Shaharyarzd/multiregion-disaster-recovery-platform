@@ -22,18 +22,16 @@ def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
         "dynamodb:UpdateItem",
     ):
         assert action not in DEPLOY
-    role_management = DEPLOY.split('sid = "ManagePortfolioLambdaRoles"', 1)[1].split(
-        "\n  }", 1
-    )[0]
-    assert "role/${var.resource_prefix}-*\"" not in role_management
+    role_management = DEPLOY.split('sid = "ManagePortfolioLambdaRoles"', 1)[1].split("\n  }", 1)[0]
+    assert 'role/${var.resource_prefix}-*"' not in role_management
     assert "role/${var.resource_prefix}-*-app" in role_management
     assert "role/${var.resource_prefix}-s3-replication" in role_management
 
 
 def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> None:
-    statement = RECOVERY.split(
-        'sid = "ApprovalGatedSyntheticProductionReconciliation"', 1
-    )[1].split("\n  }", 1)[0]
+    statement = RECOVERY.split('sid = "ApprovalGatedSyntheticProductionReconciliation"', 1)[
+        1
+    ].split("\n  }", 1)[0]
     for action in (
         "dynamodb:DeleteItem",
         "dynamodb:GetItem",
@@ -50,8 +48,8 @@ def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> N
 
 
 def test_isolated_target_actions_use_only_reviewed_prefix() -> None:
-    statement = RECOVERY.split(
-        'sid = "ConfigureAndValidateIsolatedRecoveryTargets"', 1
-    )[1].split("\n  }", 1)[0]
+    statement = RECOVERY.split('sid = "ConfigureAndValidateIsolatedRecoveryTargets"', 1)[1].split(
+        "\n  }", 1
+    )[0]
     assert statement.count(":table/${var.resource_prefix}-recovery-*") == 2
     assert ":table/${var.resource_prefix}-transactions" not in statement

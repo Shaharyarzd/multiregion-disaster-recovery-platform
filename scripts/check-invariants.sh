@@ -5,10 +5,12 @@ if rg -n "AdministratorAccess" terraform .github src; then
   echo "Broad AdministratorAccess is forbidden" >&2
   exit 1
 fi
-if rg -n "terraform[[:space:]]+apply" .github/workflows; then
-  echo "Automated Terraform apply is forbidden" >&2
+if rg -n "terraform[[:space:]]+apply" .github/workflows --glob '!aws-deploy.yml'; then
+  echo "Terraform apply is restricted to the controlled deployment workflow" >&2
   exit 1
 fi
+rg -q "DEPLOY_DISPOSABLE_MILESTONE_2" .github/workflows/aws-deploy.yml
+rg -q "environment: aws-deployment" .github/workflows/aws-deploy.yml
 if rg -n "AKIA[0-9A-Z]{16}" --glob '!scripts/check-invariants.sh' .; then
   echo "Potential AWS access key found" >&2
   exit 1

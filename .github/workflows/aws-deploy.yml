@@ -1,0 +1,99 @@
+name: Controlled AWS deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_DISPOSABLE_MILESTONE_2
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    environment: aws-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce explicit disposable-run confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "DEPLOY_DISPOSABLE_MILESTONE_2"
+
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_PRIMARY_REGION }}
+
+      - name: Enforce account and region boundaries
+        env:
+          PRIMARY_REGION: ${{ vars.AWS_PRIMARY_REGION }}
+          SECONDARY_REGION: ${{ vars.AWS_SECONDARY_REGION }}
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "293951765338"
+          test "$PRIMARY_REGION" = "us-east-1"
+          test "$SECONDARY_REGION" = "us-west-2"
+
+      - name: Build Lambda artifact
+        run: ./scripts/build-lambda.sh
+
+      - name: Apply shared data boundary
+        working-directory: terraform/stacks/global
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve
+
+      - name: Apply Region A
+        working-directory: terraform/stacks/region-a
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve \
+            -var="table_name=$(terraform -chdir=../global output -raw table_name)" \
+            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)"
+
+      - name: Apply Region B
+        working-directory: terraform/stacks/region-b
+        run: |
+          terraform init -input=false
+          terraform apply -input=false -auto-approve \
+            -var="table_name=$(terraform -chdir=../global output -raw table_name)" \
+            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)"
+
+      - name: Capture non-secret runtime context
+        run: |
+          jq -n \
+            --arg account_id "$(aws sts get-caller-identity --query Account --output text)" \
+            --arg primary_region "${{ vars.AWS_PRIMARY_REGION }}" \
+            --arg secondary_region "${{ vars.AWS_SECONDARY_REGION }}" \
+            --arg table_name "$(terraform -chdir=terraform/stacks/global output -raw table_name)" \
+            --arg table_arn "$(terraform -chdir=terraform/stacks/global output -raw table_arn)" \
+            --arg primary_bucket "$(terraform -chdir=terraform/stacks/global output -raw primary_bucket)" \
+            --arg secondary_bucket "$(terraform -chdir=terraform/stacks/global output -raw secondary_bucket)" \
+            --arg evidence_bucket "$(terraform -chdir=terraform/stacks/global output -raw evidence_bucket)" \
+            --arg evidence_signing_key_arn "$(terraform -chdir=terraform/stacks/global output -raw evidence_signing_key_arn)" \
+            --arg primary_api "$(terraform -chdir=terraform/stacks/region-a output -raw api_endpoint)" \
+            --arg secondary_api "$(terraform -chdir=terraform/stacks/region-b output -raw api_endpoint)" \
+            '{account_id:$account_id,primary_region:$primary_region,secondary_region:$secondary_region,table_name:$table_name,table_arn:$table_arn,primary_bucket:$primary_bucket,secondary_bucket:$secondary_bucket,evidence_bucket:$evidence_bucket,evidence_signing_key_arn:$evidence_signing_key_arn,primary_api:$primary_api,secondary_api:$secondary_api}' \
+            > runtime-context.json
+
+      - name: Preserve Terraform state and runtime context
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-dr-deployment-state
+          path: |
+            terraform/stacks/global/terraform.tfstate*
+            terraform/stacks/region-a/terraform.tfstate*
+            terraform/stacks/region-b/terraform.tfstate*
+            runtime-context.json
+          if-no-files-found: warn
+          retention-days: 7
+

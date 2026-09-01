@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "terraform/modules/github-oidc/main.tf").read_text(encoding="utf-8")
+DEPLOY_WORKFLOW = (ROOT / ".github/workflows/aws-deploy.yml").read_text(encoding="utf-8")
 DEPLOY = SOURCE.split('data "aws_iam_policy_document" "deploy"', 1)[1].split(
     'resource "aws_iam_role_policy" "deploy"', 1
 )[0]
@@ -30,10 +31,21 @@ def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
     assert "var.temporary_replica_update_item ? [1] : []" in DEPLOY
     assert '"dynamodb:DescribeTimeToLive"' in infrastructure
     assert '"s3:GetBucketCORS"' in DEPLOY
+    assert '"s3:GetBucketWebsite"' in DEPLOY
     role_management = DEPLOY.split('sid = "ManagePortfolioLambdaRoles"', 1)[1].split("\n  }", 1)[0]
     assert 'role/${var.resource_prefix}-*"' not in role_management
     assert "role/${var.resource_prefix}-*-app" in role_management
     assert "role/${var.resource_prefix}-s3-replication" in role_management
+
+
+def test_resume_repairs_only_verified_tainted_resources_and_blocks_destroy() -> None:
+    assert DEPLOY_WORKFLOW.count("terraform untaint") == 2
+    assert "terraform untaint module.data.aws_dynamodb_table.transactions" in DEPLOY_WORKFLOW
+    assert "terraform untaint module.data.aws_kms_key.evidence_signing" in DEPLOY_WORKFLOW
+    assert "'Table.TableStatus'" in DEPLOY_WORKFLOW
+    assert "'Table.ItemCount'" in DEPLOY_WORKFLOW
+    assert "'KeyMetadata.KeyState'" in DEPLOY_WORKFLOW
+    assert 'index("delete")' in DEPLOY_WORKFLOW
 
 
 def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> None:

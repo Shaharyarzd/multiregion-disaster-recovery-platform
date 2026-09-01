@@ -193,6 +193,7 @@ data "aws_iam_policy_document" "deploy" {
       "s3:GetBucketCORS",
       "s3:GetBucketPolicy",
       "s3:GetBucketPublicAccessBlock",
+      "s3:GetBucketWebsite",
       "s3:GetReplicationConfiguration",
       "s3:GetBucketTagging",
       "s3:GetBucketVersioning",

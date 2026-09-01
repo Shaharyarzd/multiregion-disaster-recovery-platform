@@ -62,9 +62,23 @@ jobs:
 
       - name: Apply shared data boundary
         working-directory: terraform/stacks/global
+        env:
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
         run: |
           terraform init -input=false
-          terraform apply -input=false -auto-approve
+          if [ -n "$RESUME_RUN_ID" ]; then
+            test "$(aws dynamodb describe-table --table-name portfolio-dr-transactions --region us-east-1 --query 'Table.TableStatus' --output text)" = "ACTIVE"
+            test "$(aws dynamodb describe-table --table-name portfolio-dr-transactions --region us-east-1 --query 'Table.ItemCount' --output text)" = "0"
+            test "$(aws kms describe-key --key-id de713abd-c143-49ac-8b9b-92d8d5aa2f8c --region us-east-1 --query 'KeyMetadata.KeyState' --output text)" = "Enabled"
+            terraform untaint module.data.aws_dynamodb_table.transactions || true
+            terraform untaint module.data.aws_kms_key.evidence_signing || true
+          fi
+          terraform plan -input=false -out=global.tfplan
+          if terraform show -json global.tfplan | jq -e 'any(.resource_changes[]?; (.change.actions | index("delete")) != null)' >/dev/null; then
+            echo "Refusing shared-data plan containing destroy or replacement actions" >&2
+            exit 1
+          fi
+          terraform apply -input=false -auto-approve global.tfplan
 
       - name: Apply Region A
         working-directory: terraform/stacks/region-a

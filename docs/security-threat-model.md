@@ -20,9 +20,10 @@ Lambda, Lambda→DynamoDB, S3 replication→destination KMS, and operator→`drc
 
 ## IAM boundary
 
-Bootstrap creates two GitHub roles. The deploy role manages portfolio-prefixed runtime resources but
+Bootstrap creates three GitHub roles. The deploy role manages portfolio-prefixed runtime resources but
 cannot perform PITR or Route 53 changes. The recovery role restores only prefixed tables, works with
-prefixed versioned buckets, and emits only the DR metric namespace. Real production should add
+prefixed versioned buckets, and emits only the DR metric namespace. The evidence role alone signs
+and archives reports. Real production should add
 permissions boundaries, SCPs, session tags, CloudTrail data events, IAM Access Analyzer, and a
 break-glass path with time-bound access.
 
@@ -37,3 +38,11 @@ AWS promotion/failback must run behind a GitHub protected environment or an equi
 with independent reviewers. The actor performing normal deployment should not self-approve high-
 impact recovery in production.
 
+### Disposable Milestone 2 exception
+
+For the single disposable validation run, the `aws-deployment`, `aws-recovery-approval`, and
+`aws-evidence-approval` environments are restricted to `main` and require `Shaharyarzd` review, but
+GitHub self-review is explicitly enabled by owner authorization. This proves environment-bound OIDC
+subjects and approval gates, not separation of duties. It must be reported as a demo exception.
+The production target requires a different authorized reviewer from the workflow initiator and
+`prevent_self_review=true`; no production promotion or failback may inherit this exception.

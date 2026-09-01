@@ -32,6 +32,7 @@ def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
     assert '"dynamodb:DescribeTimeToLive"' in infrastructure
     assert '"s3:GetBucketCORS"' in DEPLOY
     assert '"s3:GetAccelerateConfiguration"' in DEPLOY
+    assert '"s3:GetBucketLogging"' in DEPLOY
     assert '"s3:GetBucketRequestPayment"' in DEPLOY
     assert '"s3:GetBucketWebsite"' in DEPLOY
     role_management = DEPLOY.split('sid = "ManagePortfolioLambdaRoles"', 1)[1].split("\n  }", 1)[0]

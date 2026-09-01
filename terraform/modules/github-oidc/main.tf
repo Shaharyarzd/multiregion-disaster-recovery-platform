@@ -192,6 +192,7 @@ data "aws_iam_policy_document" "deploy" {
       "s3:GetBucketAcl",
       "s3:GetAccelerateConfiguration",
       "s3:GetBucketCORS",
+      "s3:GetBucketLogging",
       "s3:GetBucketPolicy",
       "s3:GetBucketPublicAccessBlock",
       "s3:GetBucketRequestPayment",

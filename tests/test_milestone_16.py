@@ -207,7 +207,14 @@ def test_iam_contract_positive_negative_and_no_admin_wildcards() -> None:
     for body in contract["roles"].values():
         for action in body["actions"]:
             assert f'"{action}"' in terraform_policy
-    assert "dynamodb:*:${data.aws_caller_identity.current.account_id}" in terraform_policy
+    primary_table_scope = (
+        "dynamodb:${var.primary_region}:${data.aws_caller_identity.current.account_id}"
+    )
+    secondary_table_scope = (
+        "dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}"
+    )
+    assert primary_table_scope in terraform_policy
+    assert secondary_table_scope in terraform_policy
     assert "kms:*:${data.aws_caller_identity.current.account_id}" in terraform_policy
     assert '"kms:*"' not in terraform_policy
     assert "aws:RequestTag/Project" in terraform_policy

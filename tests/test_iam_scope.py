@@ -1,0 +1,57 @@
+"""Regression checks for the approval-gated production reconciliation boundary."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = (ROOT / "terraform/modules/github-oidc/main.tf").read_text(encoding="utf-8")
+DEPLOY = SOURCE.split('data "aws_iam_policy_document" "deploy"', 1)[1].split(
+    'resource "aws_iam_role_policy" "deploy"', 1
+)[0]
+RECOVERY = SOURCE.split('data "aws_iam_policy_document" "recovery"', 1)[1].split(
+    'resource "aws_iam_role_policy" "recovery"', 1
+)[0]
+
+
+def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
+    for action in (
+        "dynamodb:BatchWriteItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+    ):
+        assert action not in DEPLOY
+    role_management = DEPLOY.split('sid = "ManagePortfolioLambdaRoles"', 1)[1].split(
+        "\n  }", 1
+    )[0]
+    assert "role/${var.resource_prefix}-*\"" not in role_management
+    assert "role/${var.resource_prefix}-*-app" in role_management
+    assert "role/${var.resource_prefix}-s3-replication" in role_management
+
+
+def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> None:
+    statement = RECOVERY.split(
+        'sid = "ApprovalGatedSyntheticProductionReconciliation"', 1
+    )[1].split("\n  }", 1)[0]
+    for action in (
+        "dynamodb:DeleteItem",
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+    ):
+        assert action in statement
+    assert statement.count(":table/${var.resource_prefix}-transactions") == 2
+    assert "${var.primary_region}" in statement
+    assert "${var.secondary_region}" in statement
+    assert 'variable = "dynamodb:LeadingKeys"' in statement
+    assert 'values   = ["txn-*"]' in statement
+    assert "BatchWriteItem" not in statement
+
+
+def test_isolated_target_actions_use_only_reviewed_prefix() -> None:
+    statement = RECOVERY.split(
+        'sid = "ConfigureAndValidateIsolatedRecoveryTargets"', 1
+    )[1].split("\n  }", 1)[0]
+    assert statement.count(":table/${var.resource_prefix}-recovery-*") == 2
+    assert ":table/${var.resource_prefix}-transactions" not in statement

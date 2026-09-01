@@ -21,8 +21,9 @@ def recovery_target_name(source_name: str, run_id: str) -> str:
     suffix = re.sub(r"[^A-Za-z0-9_.-]", "-", run_id)[:20]
     separator = "-recovery-"
     source = re.sub(r"[^A-Za-z0-9_.-]", "-", source_name)
-    source = source[: 255 - len(separator) - len(suffix)]
-    name = f"{source}{separator}{suffix}"
+    project = source.removesuffix("-transactions")
+    project = project[: 255 - len(separator) - len(suffix)]
+    name = f"{project}{separator}{suffix}"
     if not TARGET_NAME.fullmatch(name):
         raise ValueError("invalid deterministic recovery target name")
     return name

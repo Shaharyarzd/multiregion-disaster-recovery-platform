@@ -120,7 +120,10 @@ data "aws_iam_policy_document" "deploy" {
       "iam:UntagRole",
       "iam:UpdateAssumeRolePolicy",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-*"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-*-app",
+      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.resource_prefix}-s3-replication",
+    ]
   }
   statement {
     sid       = "PassOnlyPortfolioLambdaRoles"
@@ -152,20 +155,16 @@ data "aws_iam_policy_document" "deploy" {
     actions = [
       "dynamodb:CreateTable",
       "dynamodb:CreateTableReplica",
-      "dynamodb:BatchWriteItem",
       "dynamodb:DeleteTable",
-      "dynamodb:DeleteItem",
       "dynamodb:DescribeContinuousBackups",
       "dynamodb:DescribeTable",
       "dynamodb:GetItem",
       "dynamodb:ListTagsOfResource",
-      "dynamodb:PutItem",
       "dynamodb:Query",
       "dynamodb:Scan",
       "dynamodb:TagResource",
       "dynamodb:UntagResource",
       "dynamodb:UpdateContinuousBackups",
-      "dynamodb:UpdateItem",
       "dynamodb:UpdateTable",
     ]
     resources = [
@@ -309,28 +308,57 @@ resource "aws_iam_role" "recovery" {
 
 data "aws_iam_policy_document" "recovery" {
   statement {
-    sid = "RestoreIsolatedDynamoTable"
+    sid = "ReadAndRestoreProductionSource"
     actions = [
       "dynamodb:DescribeContinuousBackups",
       "dynamodb:DescribeTable",
-      "dynamodb:ListBackups",
       "dynamodb:ListTagsOfResource",
       "dynamodb:RestoreTableToPointInTime",
+      "dynamodb:Scan",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.primary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions",
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions",
+    ]
+  }
+  statement {
+    sid = "ConfigureAndValidateIsolatedRecoveryTargets"
+    actions = [
+      "dynamodb:DeleteTable",
+      "dynamodb:DescribeContinuousBackups",
+      "dynamodb:DescribeTable",
+      "dynamodb:DescribeTimeToLive",
+      "dynamodb:GetItem",
+      "dynamodb:ListTagsOfResource",
+      "dynamodb:PutItem",
       "dynamodb:Scan",
       "dynamodb:TagResource",
       "dynamodb:UpdateContinuousBackups",
       "dynamodb:UpdateTable",
       "dynamodb:UpdateTimeToLive",
-      "dynamodb:DescribeTimeToLive",
     ]
     resources = [
-      "arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*"
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.primary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*",
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*",
     ]
   }
   statement {
-    sid       = "ReplayOnlyToIsolatedRecoveryTargets"
-    actions   = ["dynamodb:GetItem", "dynamodb:PutItem"]
-    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
+    sid = "ApprovalGatedSyntheticProductionReconciliation"
+    actions = [
+      "dynamodb:DeleteItem",
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
+    ]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.primary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions",
+      "arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions",
+    ]
+    condition {
+      test     = "ForAllValues:StringLike"
+      variable = "dynamodb:LeadingKeys"
+      values   = ["txn-*"]
+    }
   }
   statement {
     sid       = "ListVersionedRecoveryBuckets"
@@ -346,11 +374,6 @@ data "aws_iam_policy_document" "recovery" {
       "s3:DeleteObject",
     ]
     resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-*/*"]
-  }
-  statement {
-    sid       = "DeleteOnlyIsolatedRecoveryTargets"
-    actions   = ["dynamodb:DeleteTable"]
-    resources = ["arn:${data.aws_partition.current.partition}:dynamodb:*:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
   }
   statement {
     sid       = "UseProjectDataKeysForRecovery"

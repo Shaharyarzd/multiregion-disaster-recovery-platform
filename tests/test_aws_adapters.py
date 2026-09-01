@@ -123,6 +123,10 @@ def test_dynamo_adapter_restores_isolated_target(monkeypatch) -> None:
     assert request["BillingModeOverride"] == "PAY_PER_REQUEST"
     assert request["SSESpecificationOverride"]["KMSMasterKeyId"] == "arn:kms"
     assert recovery_target_name("source", "run/id") == "source-recovery-run-id"
+    assert (
+        recovery_target_name("portfolio-dr-transactions", "run/id")
+        == "portfolio-dr-recovery-run-id"
+    )
     assert len(recovery_target_name("s" * 255, "run-id")) == 255
     with pytest.raises(ValueError, match="isolated"):
         adapter.restore_to_isolated_table("arn:source", "source", point, kms_key_arn="arn:kms")

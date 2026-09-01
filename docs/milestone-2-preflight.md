@@ -5,7 +5,7 @@
 The source must be `ACTIVE`, PITR `ENABLED`, and the chosen UTC recovery point must be inside the
 observed earliest/latest restorable window. `drctl` records that point before requesting
 `RestoreTableToPointInTime`. The target name is deterministic:
-`<source>-recovery-<sanitized-run-id>`. The request overrides billing to on-demand and encryption to
+`portfolio-dr-recovery-<sanitized-run-id>`. The request overrides billing to on-demand and encryption to
 the recovery-region KMS key. It creates no replica.
 
 Restore completion is only infrastructure availability. Before validation, the controller verifies
@@ -13,6 +13,15 @@ Restore completion is only infrastructure availability. Before validation, the c
 state, and no replicas. Alarms/autoscaling are not used by the on-demand demo; a production restore
 must re-create them. TTL and streams are opt-in because enabling either without the application
 contract would be unsafe.
+
+Production reconciliation is available only through the `aws-recovery-approval` OIDC environment.
+IAM restricts item mutations to the exact `portfolio-dr-transactions` table in the two approved
+regions and requires `dynamodb:LeadingKeys` to match `txn-*`. This context key is enforceable for
+the individual `GetItem`, `PutItem`, `UpdateItem`, and `DeleteItem` calls used by the bounded demo.
+It is not a content classifier: synthetic-only payload enforcement remains an explicit controller
+validation rule, and the table itself contains synthetic data only. Batch mutations are not
+permitted. The deployment role has no production item-mutation action and cannot edit the GitHub
+OIDC roles after the correction is installed.
 
 The restored table remains isolated. The bounded portfolio policy is PITR base plus unique,
 uncorrupted writes between recovery point and corruption cutoff. Pre-point missing records,

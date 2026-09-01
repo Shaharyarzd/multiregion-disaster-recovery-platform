@@ -8,6 +8,7 @@ data "aws_iam_policy_document" "data_key" {
     sid = "AccountDelegatedDataKeyAdministrationAndUse"
     actions = [
       "kms:CancelKeyDeletion",
+      "kms:CreateAlias",
       "kms:CreateGrant",
       "kms:Decrypt",
       "kms:DescribeKey",
@@ -51,6 +52,7 @@ data "aws_iam_policy_document" "signing_key" {
       "kms:DisableKey",
       "kms:EnableKey",
       "kms:GetKeyPolicy",
+      "kms:GetKeyRotationStatus",
       "kms:GetPublicKey",
       "kms:ListGrants",
       "kms:ListKeyPolicies",

@@ -24,4 +24,9 @@ variable "evidence_environment" { type = string }
 variable "resource_prefix" { type = string }
 variable "primary_region" { type = string }
 variable "secondary_region" { type = string }
+variable "temporary_replica_update_item" {
+  type        = bool
+  default     = false
+  description = "One-run Global Table bootstrap exception; must be false before baseline data."
+}
 variable "tags" { type = map(string) }

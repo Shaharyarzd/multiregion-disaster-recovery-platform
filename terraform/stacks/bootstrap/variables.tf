@@ -22,3 +22,8 @@ variable "github_oidc_provider_arn" {
   type        = string
   description = "Existing account-level GitHub Actions OIDC provider ARN; bootstrap does not manage the provider."
 }
+variable "temporary_replica_update_item" {
+  type        = bool
+  default     = false
+  description = "Temporary secondary-replica creation exception; remove before synthetic writes."
+}

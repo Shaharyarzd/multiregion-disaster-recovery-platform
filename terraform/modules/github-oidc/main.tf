@@ -172,6 +172,14 @@ data "aws_iam_policy_document" "deploy" {
       "arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-*",
     ]
   }
+  dynamic "statement" {
+    for_each = var.temporary_replica_update_item ? [1] : []
+    content {
+      sid       = "TemporaryEmptySecondaryReplicaBootstrap"
+      actions   = ["dynamodb:UpdateItem"]
+      resources = ["arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions"]
+    }
+  }
   statement {
     sid = "ManageProjectS3Buckets"
     actions = [
@@ -180,6 +188,7 @@ data "aws_iam_policy_document" "deploy" {
       "s3:DeleteBucketPolicy",
       "s3:GetEncryptionConfiguration",
       "s3:GetBucketObjectLockConfiguration",
+      "s3:GetBucketAcl",
       "s3:GetBucketPolicy",
       "s3:GetBucketPublicAccessBlock",
       "s3:GetReplicationConfiguration",

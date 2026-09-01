@@ -15,13 +15,19 @@ RECOVERY = SOURCE.split('data "aws_iam_policy_document" "recovery"', 1)[1].split
 
 
 def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
-    for action in (
-        "dynamodb:BatchWriteItem",
-        "dynamodb:DeleteItem",
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-    ):
+    infrastructure = DEPLOY.split('sid = "ManageProjectDynamoInfrastructure"', 1)[1].split(
+        "\n  }", 1
+    )[0]
+    for action in ("dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:PutItem"):
         assert action not in DEPLOY
+    assert "dynamodb:UpdateItem" not in infrastructure
+    temporary = DEPLOY.split('sid       = "TemporaryEmptySecondaryReplicaBootstrap"', 1)[1].split(
+        "\n    }", 1
+    )[0]
+    assert 'actions   = ["dynamodb:UpdateItem"]' in temporary
+    assert "${var.secondary_region}" in temporary
+    assert ":table/${var.resource_prefix}-transactions" in temporary
+    assert "var.temporary_replica_update_item ? [1] : []" in DEPLOY
     role_management = DEPLOY.split('sid = "ManagePortfolioLambdaRoles"', 1)[1].split("\n  }", 1)[0]
     assert 'role/${var.resource_prefix}-*"' not in role_management
     assert "role/${var.resource_prefix}-*-app" in role_management

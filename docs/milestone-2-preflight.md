@@ -23,6 +23,12 @@ validation rule, and the table itself contains synthetic data only. Batch mutati
 permitted. The deployment role has no production item-mutation action and cannot edit the GitHub
 OIDC roles after the correction is installed.
 
+AWS runtime validation showed that Global Table replica creation performs an authorization check
+for `dynamodb:UpdateItem` on the secondary table. A default-off Terraform switch may grant that
+single action on the exact empty `us-west-2` table only during replica creation. It must be removed
+and actual-principal denial re-proven before baseline writes; it is never part of steady-state
+deployment authority.
+
 The restored table remains isolated. The bounded portfolio policy is PITR base plus unique,
 uncorrupted writes between recovery point and corruption cutoff. Pre-point missing records,
 different content under the same key, restored records after the selected point, and writes after

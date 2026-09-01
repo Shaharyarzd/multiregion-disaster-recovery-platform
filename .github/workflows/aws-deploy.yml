@@ -7,8 +7,14 @@ on:
         description: Type DEPLOY_DISPOSABLE_MILESTONE_2
         required: true
         type: string
+      resume_run_id:
+        description: Prior failed deployment run containing preserved Terraform state
+        required: false
+        default: ""
+        type: string
 
 permissions:
+  actions: read
   contents: read
   id-token: write
 
@@ -23,6 +29,15 @@ jobs:
         run: test "$CONFIRMATION" = "DEPLOY_DISPOSABLE_MILESTONE_2"
 
       - uses: actions/checkout@v4
+
+      - name: Restore preserved Terraform state
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: portfolio-dr-deployment-state
+          path: .
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -96,4 +111,3 @@ jobs:
             runtime-context.json
           if-no-files-found: warn
           retention-days: 7
-

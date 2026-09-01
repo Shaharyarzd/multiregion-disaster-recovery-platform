@@ -12,19 +12,19 @@ jobs:
     uses: ./.github/workflows/aws-oidc-preflight-job.yml
     with:
       environment_name: aws-deployment
-      expected_sub: repo:Shaharyarzd/multiregion-disaster-recovery-platform:environment:aws-deployment
+      expected_sub: repo:Shaharyarzd@47492377/multiregion-disaster-recovery-platform@1353073985:environment:aws-deployment
       role_arn: arn:aws:iam::293951765338:role/portfolio-dr-github-deploy
 
   recovery:
     uses: ./.github/workflows/aws-oidc-preflight-job.yml
     with:
       environment_name: aws-recovery-approval
-      expected_sub: repo:Shaharyarzd/multiregion-disaster-recovery-platform:environment:aws-recovery-approval
+      expected_sub: repo:Shaharyarzd@47492377/multiregion-disaster-recovery-platform@1353073985:environment:aws-recovery-approval
       role_arn: arn:aws:iam::293951765338:role/portfolio-dr-github-recovery
 
   evidence:
     uses: ./.github/workflows/aws-oidc-preflight-job.yml
     with:
       environment_name: aws-evidence-approval
-      expected_sub: repo:Shaharyarzd/multiregion-disaster-recovery-platform:environment:aws-evidence-approval
+      expected_sub: repo:Shaharyarzd@47492377/multiregion-disaster-recovery-platform@1353073985:environment:aws-evidence-approval
       role_arn: arn:aws:iam::293951765338:role/portfolio-dr-github-evidence

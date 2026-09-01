@@ -16,7 +16,7 @@ data "aws_iam_policy_document" "deploy_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.deployment_environment}"]
+      values   = ["${var.github_oidc_subject_prefix}:environment:${var.deployment_environment}"]
     }
   }
 }
@@ -290,7 +290,7 @@ data "aws_iam_policy_document" "recovery_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.recovery_environment}"]
+      values   = ["${var.github_oidc_subject_prefix}:environment:${var.recovery_environment}"]
     }
     condition {
       test     = "StringEquals"
@@ -398,7 +398,7 @@ data "aws_iam_policy_document" "evidence_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:environment:${var.evidence_environment}"]
+      values   = ["${var.github_oidc_subject_prefix}:environment:${var.evidence_environment}"]
     }
     condition {
       test     = "StringEquals"

@@ -1,5 +1,14 @@
 variable "name" { type = string }
 variable "github_repository" { type = string }
+variable "github_oidc_subject_prefix" {
+  type        = string
+  description = "Observed GitHub OIDC repository subject prefix, including immutable owner and repository IDs."
+
+  validation {
+    condition     = can(regex("^repo:[A-Za-z0-9_.-]+@[0-9]+/[A-Za-z0-9_.-]+@[0-9]+$", var.github_oidc_subject_prefix))
+    error_message = "github_oidc_subject_prefix must contain immutable GitHub owner and repository IDs."
+  }
+}
 variable "github_oidc_provider_arn" {
   type        = string
   description = "ARN of the existing account-level GitHub Actions OIDC provider. This module never creates or mutates it."

@@ -14,6 +14,10 @@ variable "github_repository" {
   type        = string
   description = "GitHub owner/repository; no repository is created by Terraform."
 }
+variable "github_oidc_subject_prefix" {
+  type        = string
+  description = "Observed GitHub OIDC repository subject prefix with immutable owner and repository IDs."
+}
 variable "github_oidc_provider_arn" {
   type        = string
   description = "Existing account-level GitHub Actions OIDC provider ARN; bootstrap does not manage the provider."

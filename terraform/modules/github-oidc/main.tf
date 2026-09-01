@@ -188,6 +188,7 @@ data "aws_iam_policy_document" "deploy" {
       "s3:DeleteBucket",
       "s3:DeleteBucketPolicy",
       "s3:GetEncryptionConfiguration",
+      "s3:GetLifecycleConfiguration",
       "s3:GetBucketObjectLockConfiguration",
       "s3:GetBucketAcl",
       "s3:GetAccelerateConfiguration",

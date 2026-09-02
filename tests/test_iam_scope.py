@@ -132,9 +132,9 @@ def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> 
     primary = DEPLOY.split('sid       = "TagPrimaryPortfolioHttpApiStageOnCreate"', 1)[1].split(
         "\n  }", 1
     )[0]
-    secondary = DEPLOY.split('sid       = "TagSecondaryPortfolioHttpApiStageOnCreate"', 1)[
-        1
-    ].split("\n  }", 1)[0]
+    secondary = DEPLOY.split('sid       = "TagSecondaryPortfolioHttpApiStageOnCreate"', 1)[1].split(
+        "\n  }", 1
+    )[0]
     for statement, region, role in (
         (primary, "${var.primary_region}", "active-a"),
         (secondary, "${var.secondary_region}", "active-b"),

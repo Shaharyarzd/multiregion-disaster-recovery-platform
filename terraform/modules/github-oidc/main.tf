@@ -155,7 +155,7 @@ data "aws_iam_policy_document" "deploy" {
     for_each = var.primary_api_id == "" ? [] : [var.primary_api_id]
     content {
       sid       = "CreateExactPrimaryPortfolioHttpApiStage"
-      actions   = ["apigateway:POST"]
+      actions   = ["apigateway:POST", "apigateway:PUT"]
       resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/apis/${statement.value}/stages"]
     }
   }
@@ -163,7 +163,7 @@ data "aws_iam_policy_document" "deploy" {
     for_each = var.secondary_api_id == "" ? [] : [var.secondary_api_id]
     content {
       sid       = "CreateExactSecondaryPortfolioHttpApiStage"
-      actions   = ["apigateway:POST"]
+      actions   = ["apigateway:POST", "apigateway:PUT"]
       resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/apis/${statement.value}/stages"]
     }
   }

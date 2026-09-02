@@ -109,6 +109,7 @@ def test_api_stage_creation_uses_only_captured_exact_api_ids() -> None:
     assert "::/apis/*/stages" not in DEPLOY
     assert 'for_each = var.primary_api_id == "" ? [] : [var.primary_api_id]' in DEPLOY
     assert 'for_each = var.secondary_api_id == "" ? [] : [var.secondary_api_id]' in DEPLOY
+    assert DEPLOY.count('actions   = ["apigateway:POST", "apigateway:PUT"]') == 2
     assert "apigateway:${var.primary_region}::/apis/${statement.value}/stages" in DEPLOY
     assert "apigateway:${var.secondary_region}::/apis/${statement.value}/stages" in DEPLOY
 

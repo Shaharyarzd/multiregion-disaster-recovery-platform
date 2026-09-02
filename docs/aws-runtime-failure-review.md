@@ -8,7 +8,8 @@ AWS evaluates HTTP API stage creation against a stage-collection authorization b
 exists. In this account, the dependent tag authorization did not expose request-tag context, so a
 tag-conditioned `POST /apis/*/stages` statement could not authorize creation safely. The demo uses
 two phases: create both APIs with stages disabled, capture their exact IDs in the preserved runtime
-context, install `POST /apis/{exact-api-id}/stages` authority through the bootstrap boundary, then
+context, install `POST` and `PUT` authority only on `/apis/{exact-api-id}/stages` through the
+bootstrap boundary, then
 rerun with stage provisioning enabled. Encoded tag-resource permissions remain request-tag and
 tag-key conditioned. Regional plans are rejected if they contain any delete or replacement action.
 

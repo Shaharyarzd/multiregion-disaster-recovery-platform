@@ -28,8 +28,7 @@ def test_deploy_mutation_exists_only_in_guarded_replica_bootstrap() -> None:
     )[0]
     assert (
         'actions   = ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", '
-        '"dynamodb:PutItem", "dynamodb:UpdateItem"]'
-        in temporary
+        '"dynamodb:PutItem", "dynamodb:UpdateItem"]' in temporary
     )
     assert "${var.secondary_region}" in temporary
     assert ":table/${var.resource_prefix}-transactions" in temporary

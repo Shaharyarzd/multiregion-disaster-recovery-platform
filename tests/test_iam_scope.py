@@ -63,9 +63,9 @@ def test_resume_repairs_only_verified_tainted_resources_and_blocks_destroy() -> 
 
 
 def test_api_tag_on_create_is_region_and_required_tag_scoped() -> None:
-    create_primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApi"', 1)[
-        1
-    ].split("\n  }", 1)[0]
+    create_primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApi"', 1)[1].split(
+        "\n  }", 1
+    )[0]
     create_secondary = DEPLOY.split('sid       = "CreateTaggedSecondaryPortfolioHttpApi"', 1)[
         1
     ].split("\n  }", 1)[0]

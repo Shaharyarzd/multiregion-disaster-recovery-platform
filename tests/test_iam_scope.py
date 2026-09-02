@@ -109,17 +109,13 @@ def test_api_stage_creation_uses_only_captured_exact_api_ids() -> None:
     assert "::/apis/*/stages" not in DEPLOY
     assert 'for_each = var.primary_api_id == "" ? [] : [var.primary_api_id]' in DEPLOY
     assert 'for_each = var.secondary_api_id == "" ? [] : [var.secondary_api_id]' in DEPLOY
-    assert (
-        "apigateway:${var.primary_region}::/apis/${statement.value}/stages" in DEPLOY
-    )
-    assert (
-        "apigateway:${var.secondary_region}::/apis/${statement.value}/stages" in DEPLOY
-    )
+    assert "apigateway:${var.primary_region}::/apis/${statement.value}/stages" in DEPLOY
+    assert "apigateway:${var.secondary_region}::/apis/${statement.value}/stages" in DEPLOY
 
 
 def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
     assert "provision_stages:" in DEPLOY_WORKFLOW
-    assert 'default: false' in DEPLOY_WORKFLOW
+    assert "default: false" in DEPLOY_WORKFLOW
     assert DEPLOY_WORKFLOW.count('-var="create_stage=$PROVISION_STAGES"') == 2
     assert DEPLOY_WORKFLOW.count("Refusing Region") == 2
     assert DEPLOY_WORKFLOW.count('index("delete")') >= 3
@@ -131,7 +127,7 @@ def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
         '--arg secondary_api_id "$(terraform -chdir=terraform/stacks/region-b output -raw api_id)"'
         in DEPLOY_WORKFLOW
     )
-    assert 'count       = var.create_stage ? 1 : 0' in REGIONAL_SERVICE
+    assert "count       = var.create_stage ? 1 : 0" in REGIONAL_SERVICE
 
 
 def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> None:

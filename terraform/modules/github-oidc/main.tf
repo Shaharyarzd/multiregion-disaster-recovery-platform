@@ -177,7 +177,7 @@ data "aws_iam_policy_document" "deploy" {
     for_each = var.temporary_replica_update_item ? [1] : []
     content {
       sid       = "TemporaryEmptySecondaryReplicaBootstrap"
-      actions   = ["dynamodb:DeleteItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
+      actions   = ["dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]
       resources = ["arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions"]
     }
   }

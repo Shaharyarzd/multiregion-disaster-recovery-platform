@@ -105,9 +105,9 @@ def test_cloudwatch_alarm_tag_read_is_two_region_and_prefix_scoped() -> None:
 
 
 def test_api_stage_creation_is_region_and_required_tag_scoped() -> None:
-    primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApiStage"', 1)[
-        1
-    ].split("\n  }", 1)[0]
+    primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApiStage"', 1)[1].split(
+        "\n  }", 1
+    )[0]
     secondary = DEPLOY.split('sid       = "CreateTaggedSecondaryPortfolioHttpApiStage"', 1)[
         1
     ].split("\n  }", 1)[0]

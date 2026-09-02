@@ -1,0 +1,53 @@
+name: AWS runtime baseline and regional outage
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RUN_SYNTHETIC_BASELINE
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
+jobs:
+  baseline:
+    environment: aws-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce explicit confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "RUN_SYNTHETIC_BASELINE"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run synthetic baseline and endpoint-outage proof
+        run: |
+          python scripts/aws-runtime-baseline.py \
+            --region-a https://cvjvklgn0b.execute-api.us-east-1.amazonaws.com \
+            --region-b https://n7hsrlcdu8.execute-api.us-west-2.amazonaws.com \
+            --run-id "github-${GITHUB_RUN_ID}" \
+            --output evidence/aws-runtime-baseline.json
+
+      - name: Enforce generated PASS without hand edits
+        run: |
+          jq -e '.evidence_scope == "AWS_RUNTIME" and .status == "PASS"' \
+            evidence/aws-runtime-baseline.json >/dev/null
+          jq -e '.dynamodb_convergence | all(.completed == true)' \
+            evidence/aws-runtime-baseline.json >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aws-runtime-baseline-${{ github.run_id }}
+          path: evidence/aws-runtime-baseline.json
+          if-no-files-found: error

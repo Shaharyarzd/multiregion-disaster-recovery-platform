@@ -15,17 +15,18 @@ RECOVERY = SOURCE.split('data "aws_iam_policy_document" "recovery"', 1)[1].split
 )[0]
 
 
-def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
+def test_deploy_mutation_exists_only_in_guarded_replica_bootstrap() -> None:
     infrastructure = DEPLOY.split('sid = "ManageProjectDynamoInfrastructure"', 1)[1].split(
         "\n  }", 1
     )[0]
-    for action in ("dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:PutItem"):
+    for action in ("dynamodb:BatchWriteItem", "dynamodb:DeleteItem"):
         assert action not in DEPLOY
+    assert "dynamodb:PutItem" not in infrastructure
     assert "dynamodb:UpdateItem" not in infrastructure
     temporary = DEPLOY.split('sid       = "TemporaryEmptySecondaryReplicaBootstrap"', 1)[1].split(
         "\n    }", 1
     )[0]
-    assert 'actions   = ["dynamodb:UpdateItem"]' in temporary
+    assert 'actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]' in temporary
     assert "${var.secondary_region}" in temporary
     assert ":table/${var.resource_prefix}-transactions" in temporary
     assert "var.temporary_replica_update_item ? [1] : []" in DEPLOY

@@ -69,6 +69,22 @@ verify_exact_tags() {
     ' >/dev/null
 }
 
+verify_existing_exact_tags() {
+  local plan_file=$1
+  terraform -chdir="$stack_dir" show -json "$plan_file" |
+    jq -e --arg address "$stage_address" --arg region_role "$region_role" '
+      first(
+        .resource_changes[]?
+        | select(.address == $address)
+        | .change.before.tags
+      ) == {
+        "DataClassification": "SYNTHETIC",
+        "Project": "portfolio-dr",
+        "RegionRole": $region_role
+      }
+    ' >/dev/null
+}
+
 terraform -chdir="$stack_dir" init -input=false
 
 if [[ "$provision_stages" != "true" ]]; then
@@ -78,6 +94,33 @@ if [[ "$provision_stages" != "true" ]]; then
     -var="stage_tags_enabled=false" \
     -var="stage_traffic_enabled=false"
   apply_guarded_plan regional.tfplan
+  exit 0
+fi
+
+# Resume path: an already verified stage must never be stripped back to the inert phase. Confirm
+# its current exact tags from refreshed plan state, then apply only the remaining in-place changes.
+if terraform -chdir="$stack_dir" state list | grep -Fqx "$stage_address"; then
+  terraform -chdir="$stack_dir" plan -input=false -out=stage-resume.tfplan \
+    "${common_vars[@]}" \
+    -var="create_stage=true" \
+    -var="stage_tags_enabled=true" \
+    -var="stage_traffic_enabled=true"
+  verify_existing_exact_tags stage-resume.tfplan
+  verify_exact_tags stage-resume.tfplan
+  apply_guarded_plan stage-resume.tfplan
+
+  set +e
+  terraform -chdir="$stack_dir" plan -input=false -detailed-exitcode \
+    -out=stage-resume-verify.tfplan \
+    "${common_vars[@]}" \
+    -var="create_stage=true" \
+    -var="stage_tags_enabled=true" \
+    -var="stage_traffic_enabled=true"
+  resume_status=$?
+  set -e
+  [[ "$resume_status" -eq 0 ]]
+  verify_existing_exact_tags stage-resume-verify.tfplan
+  verify_exact_tags stage-resume-verify.tfplan
   exit 0
 fi
 

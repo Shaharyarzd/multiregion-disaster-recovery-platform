@@ -176,6 +176,11 @@ def test_stage_tags_are_verified_before_traffic_and_failures_roll_back() -> None
     assert "portfolio-dr-aws-control-plane" in DEPLOY_WORKFLOW
     assert "portfolio-dr-aws-control-plane" in PLAN_WORKFLOW
     assert "cancel-in-progress: false" in DEPLOY_WORKFLOW
+    assert "verify_existing_exact_tags stage-resume.tfplan" in STAGE_SCRIPT
+    assert "verify_existing_exact_tags stage-resume-verify.tfplan" in STAGE_SCRIPT
+    assert STAGE_SCRIPT.index("verify_existing_exact_tags stage-resume.tfplan") < (
+        STAGE_SCRIPT.index("apply_guarded_plan stage-resume.tfplan")
+    )
 
 
 def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> None:

@@ -5,14 +5,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import time
-import urllib.error
-import urllib.request
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+class HttpStatusError(RuntimeError):
+    def __init__(self, status: int) -> None:
+        super().__init__(f"HTTP request failed with status {status}")
+        self.status = status
 
 
 def utc_now() -> datetime:
@@ -24,15 +30,29 @@ def iso(value: datetime) -> str:
 
 
 def request_json(url: str, method: str = "GET", body: dict[str, object] | None = None) -> Any:
-    data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={"content-type": "application/json"},
+    parsed = urllib.parse.urlsplit(url)
+    allowed_suffixes = (
+        ".execute-api.us-east-1.amazonaws.com",
+        ".execute-api.us-west-2.amazonaws.com",
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.loads(response.read())
+    if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(
+        allowed_suffixes
+    ):
+        raise ValueError("runtime request target is not an approved regional API endpoint")
+    data = json.dumps(body).encode() if body is not None else None
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    connection = http.client.HTTPSConnection(parsed.hostname, timeout=15)
+    try:
+        connection.request(method, path, body=data, headers={"content-type": "application/json"})
+        response = connection.getresponse()
+        raw = response.read()
+        if response.status >= 400:
+            raise HttpStatusError(response.status)
+        return json.loads(raw)
+    finally:
+        connection.close()
 
 
 def create(endpoint: str, seed: str, amount: int) -> dict[str, Any]:
@@ -61,8 +81,8 @@ def observe(endpoint: str, transaction_id: str, timeout: float = 45.0) -> dict[s
                     "attempts": attempts,
                     "completed": True,
                 }
-        except urllib.error.HTTPError as error:
-            if error.code != 404:
+        except HttpStatusError as error:
+            if error.status != 404:
                 raise
         time.sleep(backoff)
         backoff = min(backoff * 2, 3.0)

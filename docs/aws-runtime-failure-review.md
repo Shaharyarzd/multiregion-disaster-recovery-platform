@@ -14,6 +14,14 @@ rerun with stage provisioning enabled. Encoded tag-resource permissions use the 
 `$default` stage ARN and remain request-tag and tag-key conditioned. Regional plans are rejected if
 they contain any delete or replacement action.
 
+Inline stage tags cannot be restored without redesigning IAM because API Gateway authorizes
+`TagResource` against the not-yet-created stage collection during `CreateStage`. The controlled
+workflow therefore creates an inert untagged stage with `auto_deploy=false`, tags it in an
+idempotent second Terraform apply, refreshes state and verifies all three exact values, and only
+then enables auto-deployment. A shared concurrency lock prevents another plan/deploy workflow from
+running during this interval. A tagging or verification failure permits only the stage rollback
+plan, deletes the inert stage, verifies its state entry is absent, and fails the workflow.
+
 - DynamoDB PITR restores to a new table and does not restore tags, alarms, streams, TTL, deletion
   protection, PITR, or global replicas automatically. Restore duration is variable. The target name
   must be unique and the source PITR window available. **PENDING AWS.**

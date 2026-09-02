@@ -7,6 +7,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "terraform/modules/github-oidc/main.tf").read_text(encoding="utf-8")
 DEPLOY_WORKFLOW = (ROOT / ".github/workflows/aws-deploy.yml").read_text(encoding="utf-8")
+PLAN_WORKFLOW = (ROOT / ".github/workflows/aws-plan.yml").read_text(encoding="utf-8")
+STAGE_SCRIPT = (ROOT / "scripts/apply-regional-stage.sh").read_text(encoding="utf-8")
 REGIONAL_SERVICE = (ROOT / "terraform/modules/regional-service/main.tf").read_text(encoding="utf-8")
 DEPLOY = SOURCE.split('data "aws_iam_policy_document" "deploy"', 1)[1].split(
     'resource "aws_iam_role_policy" "deploy"', 1
@@ -117,9 +119,11 @@ def test_api_stage_creation_uses_only_captured_exact_api_ids() -> None:
 def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
     assert "provision_stages:" in DEPLOY_WORKFLOW
     assert "default: false" in DEPLOY_WORKFLOW
-    assert DEPLOY_WORKFLOW.count('-var="create_stage=$PROVISION_STAGES"') == 2
-    assert DEPLOY_WORKFLOW.count("Refusing Region") == 2
-    assert DEPLOY_WORKFLOW.count('index("delete")') >= 3
+    assert DEPLOY_WORKFLOW.count("./scripts/apply-regional-stage.sh") == 2
+    assert 'index("delete")' in DEPLOY_WORKFLOW
+    assert "Refusing regional plan containing destroy or replacement actions" in STAGE_SCRIPT
+    assert 'stage_address=\'module.service.aws_apigatewayv2_stage.default[0]\'' in STAGE_SCRIPT
+    assert 'and $changes[0].change.actions == ["delete"]' in STAGE_SCRIPT
     assert (
         '--arg primary_api_id "$(terraform -chdir=terraform/stacks/region-a output -raw api_id)"'
         in DEPLOY_WORKFLOW
@@ -129,6 +133,26 @@ def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
         in DEPLOY_WORKFLOW
     )
     assert "count       = var.create_stage ? 1 : 0" in REGIONAL_SERVICE
+
+
+def test_stage_tags_are_verified_before_traffic_and_failures_roll_back() -> None:
+    assert "auto_deploy = var.stage_traffic_enabled" in REGIONAL_SERVICE
+    assert "tags = var.stage_tags_enabled ? var.tags : {}" in REGIONAL_SERVICE
+    assert "!var.stage_traffic_enabled || var.stage_tags_enabled" in REGIONAL_SERVICE
+    assert STAGE_SCRIPT.index('-var="stage_traffic_enabled=false"') < STAGE_SCRIPT.index(
+        "verify_exact_tags stage-tag-verify.tfplan"
+    )
+    assert STAGE_SCRIPT.index("verify_exact_tags stage-tag-verify.tfplan") < STAGE_SCRIPT.index(
+        '-var="stage_traffic_enabled=true"'
+    )
+    assert "trap rollback_stage ERR" in STAGE_SCRIPT
+    assert "terraform -chdir=\"$stack_dir\" apply" in STAGE_SCRIPT
+    assert '"DataClassification": "SYNTHETIC"' in STAGE_SCRIPT
+    assert '"Project": "portfolio-dr"' in STAGE_SCRIPT
+    assert '"RegionRole": $region_role' in STAGE_SCRIPT
+    assert "portfolio-dr-aws-control-plane" in DEPLOY_WORKFLOW
+    assert "portfolio-dr-aws-control-plane" in PLAN_WORKFLOW
+    assert "cancel-in-progress: false" in DEPLOY_WORKFLOW
 
 
 def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> None:

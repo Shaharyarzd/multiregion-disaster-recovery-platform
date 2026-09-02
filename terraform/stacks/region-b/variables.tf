@@ -13,6 +13,14 @@ variable "create_stage" {
   default     = false
   description = "Enable only after the deploy role is scoped to this stack's exact API ID."
 }
+variable "stage_tags_enabled" {
+  type    = bool
+  default = false
+}
+variable "stage_traffic_enabled" {
+  type    = bool
+  default = false
+}
 variable "artifact_path" {
   type    = string
   default = "../../../dist/dr-app.zip"

@@ -23,6 +23,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
 jobs:
   deploy:
     environment: aws-deployment
@@ -96,36 +100,26 @@ jobs:
           terraform apply -input=false -auto-approve global.tfplan
 
       - name: Apply Region A
-        working-directory: terraform/stacks/region-a
         env:
           PROVISION_STAGES: ${{ inputs.provision_stages }}
         run: |
-          terraform init -input=false
-          terraform plan -input=false -out=region-a.tfplan \
-            -var="table_name=$(terraform -chdir=../global output -raw table_name)" \
-            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)" \
-            -var="create_stage=$PROVISION_STAGES"
-          if terraform show -json region-a.tfplan | jq -e 'any(.resource_changes[]?; (.change.actions | index("delete")) != null)' >/dev/null; then
-            echo "Refusing Region A plan containing destroy or replacement actions" >&2
-            exit 1
-          fi
-          terraform apply -input=false -auto-approve region-a.tfplan
+          ./scripts/apply-regional-stage.sh \
+            terraform/stacks/region-a \
+            active-a \
+            "$PROVISION_STAGES" \
+            "$(terraform -chdir=terraform/stacks/global output -raw table_name)" \
+            "$(terraform -chdir=terraform/stacks/global output -raw table_arn)"
 
       - name: Apply Region B
-        working-directory: terraform/stacks/region-b
         env:
           PROVISION_STAGES: ${{ inputs.provision_stages }}
         run: |
-          terraform init -input=false
-          terraform plan -input=false -out=region-b.tfplan \
-            -var="table_name=$(terraform -chdir=../global output -raw table_name)" \
-            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)" \
-            -var="create_stage=$PROVISION_STAGES"
-          if terraform show -json region-b.tfplan | jq -e 'any(.resource_changes[]?; (.change.actions | index("delete")) != null)' >/dev/null; then
-            echo "Refusing Region B plan containing destroy or replacement actions" >&2
-            exit 1
-          fi
-          terraform apply -input=false -auto-approve region-b.tfplan
+          ./scripts/apply-regional-stage.sh \
+            terraform/stacks/region-b \
+            active-b \
+            "$PROVISION_STAGES" \
+            "$(terraform -chdir=terraform/stacks/global output -raw table_name)" \
+            "$(terraform -chdir=terraform/stacks/global output -raw table_arn)"
 
       - name: Capture non-secret runtime context
         run: |

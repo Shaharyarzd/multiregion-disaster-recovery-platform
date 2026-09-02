@@ -13,6 +13,10 @@ permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
 jobs:
   plan:
     environment: aws-deployment
@@ -35,4 +39,3 @@ jobs:
 
       # Applying is intentionally absent. An owner reviews the plan and performs a
       # separate authorized deployment; recovery actions use another environment/role.
-

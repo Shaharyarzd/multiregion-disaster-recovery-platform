@@ -6,14 +6,16 @@ terraform {
 }
 provider "aws" { region = var.region }
 module "service" {
-  source        = "../../modules/regional-service"
-  name          = var.name
-  region        = var.region
-  table_name    = var.table_name
-  table_arn     = var.table_arn
-  artifact_path = var.artifact_path
-  create_stage  = var.create_stage
-  tags          = local.tags
+  source                = "../../modules/regional-service"
+  name                  = var.name
+  region                = var.region
+  table_name            = var.table_name
+  table_arn             = var.table_arn
+  artifact_path         = var.artifact_path
+  create_stage          = var.create_stage
+  stage_tags_enabled    = var.stage_tags_enabled
+  stage_traffic_enabled = var.stage_traffic_enabled
+  tags                  = local.tags
 }
 locals {
   tags = { Project = var.name, RegionRole = "active-a", DataClassification = "SYNTHETIC" }

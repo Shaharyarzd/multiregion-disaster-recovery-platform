@@ -97,13 +97,19 @@ resource "aws_apigatewayv2_stage" "default" {
   count       = var.create_stage ? 1 : 0
   api_id      = aws_apigatewayv2_api.app.id
   name        = "$default"
-  auto_deploy = true
+  auto_deploy = var.stage_traffic_enabled
   default_route_settings {
     detailed_metrics_enabled = true
     throttling_burst_limit   = 20
     throttling_rate_limit    = 10
   }
-  tags = var.tags
+  tags = var.stage_tags_enabled ? var.tags : {}
+  lifecycle {
+    precondition {
+      condition     = !var.stage_traffic_enabled || var.stage_tags_enabled
+      error_message = "Stage traffic cannot be enabled before direct stage tags are enabled."
+    }
+  }
 }
 
 resource "aws_lambda_permission" "api" {

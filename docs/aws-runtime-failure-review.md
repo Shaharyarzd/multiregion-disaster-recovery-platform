@@ -10,9 +10,10 @@ tag-conditioned `POST /apis/*/stages` statement could not authorize creation saf
 two phases: create both APIs with stages disabled, capture their exact IDs in the preserved runtime
 context, install `POST` and `PUT` authority only on `/apis/{exact-api-id}/stages` through the
 bootstrap boundary, then
-rerun with stage provisioning enabled. Encoded tag-resource permissions use the exact API ID and
-`$default` stage ARN and remain request-tag and tag-key conditioned. Regional plans are rejected if
-they contain any delete or replacement action.
+rerun with stage provisioning enabled. API Gateway evaluates the tag IAM resource as an unencoded
+`/tags/arn:aws:apigateway:.../apis/{exact-api-id}/stages/$default` ARN even though its HTTP endpoint
+uses URL encoding. That exact runtime-observed resource remains request-tag and tag-key conditioned.
+Regional plans are rejected if they contain any delete or replacement action.
 
 Inline stage tags cannot be restored without redesigning IAM because API Gateway authorizes
 `TagResource` against the not-yet-created stage collection during `CreateStage`. The controlled

@@ -172,7 +172,7 @@ data "aws_iam_policy_document" "deploy" {
     content {
       sid       = "TagPrimaryPortfolioHttpApiStageOnCreate"
       actions   = ["apigateway:POST"]
-      resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.primary_region}%3A%3A%2Fapis%2F${statement.value}%2Fstages%2F%24default"]
+      resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/tags/arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/apis/${statement.value}/stages/$default"]
       condition {
         test     = "StringEquals"
         variable = "aws:RequestTag/Project"
@@ -200,7 +200,7 @@ data "aws_iam_policy_document" "deploy" {
     content {
       sid       = "TagSecondaryPortfolioHttpApiStageOnCreate"
       actions   = ["apigateway:POST"]
-      resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.secondary_region}%3A%3A%2Fapis%2F${statement.value}%2Fstages%2F%24default"]
+      resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/tags/arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/apis/${statement.value}/stages/$default"]
       condition {
         test     = "StringEquals"
         variable = "aws:RequestTag/Project"

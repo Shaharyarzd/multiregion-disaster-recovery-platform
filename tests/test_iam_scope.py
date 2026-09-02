@@ -168,9 +168,10 @@ def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> 
     ):
         assert 'actions   = ["apigateway:POST"]' in statement
         assert statement.count(region) == 2
-        assert "::/tags/arn%3Aaws%3Aapigateway%3A" in statement
-        assert "%3A%3A%2Fapis%2F${statement.value}%2Fstages%2F%24default" in statement
-        assert "%2Fapis%2F*%2Fstages" not in statement
+        assert "::/tags/arn:${data.aws_partition.current.partition}:apigateway:" in statement
+        assert "::/apis/${statement.value}/stages/$default" in statement
+        assert "%2Fapis" not in statement
+        assert "/apis/*/stages" not in statement
         assert 'variable = "aws:RequestTag/Project"' in statement
         assert 'variable = "aws:RequestTag/DataClassification"' in statement
         assert 'values   = ["SYNTHETIC"]' in statement

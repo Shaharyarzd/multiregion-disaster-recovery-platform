@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from dr_platform.application import MemoryRepository, create_transaction, deterministic_id, handler
 
@@ -51,3 +52,17 @@ def test_post_and_list(monkeypatch) -> None:
     listed = handler(event("GET", "/transactions"), None, repository)
     assert created["statusCode"] == 201
     assert len(json.loads(listed["body"])["items"]) == 1
+
+
+def test_dynamodb_decimal_values_are_json_serializable() -> None:
+    repository = MemoryRepository()
+    repository.items["txn-decimal"] = {
+        "transaction_id": "txn-decimal",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "region": "us-east-1",
+        "amount_cents": Decimal("101"),
+        "payload": "synthetic-order:decimal",
+    }
+    listed = handler(event("GET", "/transactions"), None, repository)
+    assert listed["statusCode"] == 200
+    assert json.loads(listed["body"])["items"][0]["amount_cents"] == 101

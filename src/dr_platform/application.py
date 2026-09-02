@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any, Protocol, cast
 
 
@@ -78,10 +79,15 @@ def create_transaction(
 
 
 def response(status: int, body: Any) -> dict[str, Any]:
+    def encode_dynamodb_number(value: object) -> int | float:
+        if isinstance(value, Decimal):
+            return int(value) if value == value.to_integral_value() else float(value)
+        raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
     return {
         "statusCode": status,
         "headers": {"content-type": "application/json"},
-        "body": json.dumps(body),
+        "body": json.dumps(body, default=encode_dynamodb_number),
     }
 
 

@@ -108,7 +108,8 @@ jobs:
             active-a \
             "$PROVISION_STAGES" \
             "$(terraform -chdir=terraform/stacks/global output -raw table_name)" \
-            "$(terraform -chdir=terraform/stacks/global output -raw table_arn)"
+            "$(terraform -chdir=terraform/stacks/global output -raw table_arn)" \
+            "$(terraform -chdir=terraform/stacks/global output -raw primary_kms_key_arn)"
 
       - name: Apply Region B
         env:
@@ -119,7 +120,8 @@ jobs:
             active-b \
             "$PROVISION_STAGES" \
             "$(terraform -chdir=terraform/stacks/global output -raw table_name)" \
-            "$(terraform -chdir=terraform/stacks/global output -raw table_arn)"
+            "$(terraform -chdir=terraform/stacks/global output -raw secondary_table_arn)" \
+            "$(terraform -chdir=terraform/stacks/global output -raw secondary_kms_key_arn)"
 
       - name: Capture non-secret runtime context
         run: |

@@ -11,6 +11,7 @@ module "service" {
   region                = var.region
   table_name            = var.table_name
   table_arn             = var.table_arn
+  table_kms_key_arn     = var.table_kms_key_arn
   artifact_path         = var.artifact_path
   create_stage          = var.create_stage
   stage_tags_enabled    = var.stage_tags_enabled

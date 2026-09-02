@@ -21,6 +21,11 @@ data "aws_iam_policy_document" "lambda" {
     resources = [var.table_arn]
   }
   statement {
+    sid       = "DecryptOnlyRegionalDynamoDataKey"
+    actions   = ["kms:Decrypt"]
+    resources = [var.table_kms_key_arn]
+  }
+  statement {
     sid       = "StructuredLogs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.app.arn}:*"]

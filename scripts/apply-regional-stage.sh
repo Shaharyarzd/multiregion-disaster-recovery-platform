@@ -6,11 +6,13 @@ region_role=${2:?region role required}
 provision_stages=${3:?provision_stages required}
 table_name=${4:?table name required}
 table_arn=${5:?table ARN required}
+table_kms_key_arn=${6:?table KMS key ARN required}
 stage_address='module.service.aws_apigatewayv2_stage.default[0]'
 
 common_vars=(
   -var="table_name=$table_name"
   -var="table_arn=$table_arn"
+  -var="table_kms_key_arn=$table_kms_key_arn"
 )
 
 plan_has_delete() {

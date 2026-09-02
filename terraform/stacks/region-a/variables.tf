@@ -8,6 +8,7 @@ variable "region" {
 }
 variable "table_name" { type = string }
 variable "table_arn" { type = string }
+variable "table_kms_key_arn" { type = string }
 variable "create_stage" {
   type        = bool
   default     = false

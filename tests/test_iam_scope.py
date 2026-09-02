@@ -135,6 +135,26 @@ def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
     assert "count       = var.create_stage ? 1 : 0" in REGIONAL_SERVICE
 
 
+def test_lambda_runtime_uses_only_its_regional_table_and_data_key() -> None:
+    statement = REGIONAL_SERVICE.split('sid       = "DecryptOnlyRegionalDynamoDataKey"', 1)[
+        1
+    ].split("\n  }", 1)[0]
+    assert 'actions   = ["kms:Decrypt"]' in statement
+    assert "resources = [var.table_kms_key_arn]" in statement
+    assert "kms:Encrypt" not in statement
+    assert "kms:GenerateDataKey" not in statement
+    assert (
+        '"$(terraform -chdir=terraform/stacks/global output -raw table_arn)" \\\n'
+        '            "$(terraform -chdir=terraform/stacks/global output -raw primary_kms_key_arn)"'
+        in DEPLOY_WORKFLOW
+    )
+    assert (
+        '"$(terraform -chdir=terraform/stacks/global output -raw secondary_table_arn)" \\\n'
+        '            "$(terraform -chdir=terraform/stacks/global output -raw secondary_kms_key_arn)"'
+        in DEPLOY_WORKFLOW
+    )
+
+
 def test_stage_tags_are_verified_before_traffic_and_failures_roll_back() -> None:
     assert "auto_deploy = var.stage_traffic_enabled" in REGIONAL_SERVICE
     assert "tags = var.stage_tags_enabled ? var.tags : {}" in REGIONAL_SERVICE

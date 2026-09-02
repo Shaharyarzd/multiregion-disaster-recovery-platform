@@ -70,8 +70,18 @@ jobs:
             test "$(aws dynamodb describe-table --table-name portfolio-dr-transactions --region us-east-1 --query 'Table.TableStatus' --output text)" = "ACTIVE"
             test "$(aws dynamodb describe-table --table-name portfolio-dr-transactions --region us-east-1 --query 'Table.ItemCount' --output text)" = "0"
             test "$(aws kms describe-key --key-id de713abd-c143-49ac-8b9b-92d8d5aa2f8c --region us-east-1 --query 'KeyMetadata.KeyState' --output text)" = "Enabled"
+            test "$(aws s3api head-bucket --bucket portfolio-dr-293951765338-us-east-1 --query BucketRegion --output text)" = "us-east-1"
+            test "$(aws s3api head-bucket --bucket portfolio-dr-293951765338-us-west-2 --query BucketRegion --output text)" = "us-west-2"
+            test "$(aws s3api head-bucket --bucket portfolio-dr-293951765338-evidence --query BucketRegion --output text)" = "us-east-1"
+            aws s3api list-object-versions --bucket portfolio-dr-293951765338-us-east-1 --output json | jq -e '((.Versions // []) | length) == 0 and ((.DeleteMarkers // []) | length) == 0' >/dev/null
+            aws s3api list-object-versions --bucket portfolio-dr-293951765338-us-west-2 --output json | jq -e '((.Versions // []) | length) == 0 and ((.DeleteMarkers // []) | length) == 0' >/dev/null
+            aws s3api list-object-versions --bucket portfolio-dr-293951765338-evidence --output json | jq -e '((.Versions // []) | length) == 0 and ((.DeleteMarkers // []) | length) == 0' >/dev/null
+            test "$(aws s3api get-object-lock-configuration --bucket portfolio-dr-293951765338-evidence --query 'ObjectLockConfiguration.ObjectLockEnabled' --output text)" = "Enabled"
             terraform untaint module.data.aws_dynamodb_table.transactions || true
             terraform untaint module.data.aws_kms_key.evidence_signing || true
+            terraform untaint module.data.aws_s3_bucket.primary || true
+            terraform untaint module.data.aws_s3_bucket.secondary || true
+            terraform untaint module.data.aws_s3_bucket.evidence || true
           fi
           terraform plan -input=false -out=global.tfplan
           if terraform show -json global.tfplan | jq -e 'any(.resource_changes[]?; (.change.actions | index("delete")) != null)' >/dev/null; then

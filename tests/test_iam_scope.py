@@ -43,12 +43,18 @@ def test_deploy_cannot_mutate_production_items_or_oidc_roles() -> None:
 
 
 def test_resume_repairs_only_verified_tainted_resources_and_blocks_destroy() -> None:
-    assert DEPLOY_WORKFLOW.count("terraform untaint") == 2
+    assert DEPLOY_WORKFLOW.count("terraform untaint") == 5
     assert "terraform untaint module.data.aws_dynamodb_table.transactions" in DEPLOY_WORKFLOW
     assert "terraform untaint module.data.aws_kms_key.evidence_signing" in DEPLOY_WORKFLOW
+    assert "terraform untaint module.data.aws_s3_bucket.primary" in DEPLOY_WORKFLOW
+    assert "terraform untaint module.data.aws_s3_bucket.secondary" in DEPLOY_WORKFLOW
+    assert "terraform untaint module.data.aws_s3_bucket.evidence" in DEPLOY_WORKFLOW
     assert "'Table.TableStatus'" in DEPLOY_WORKFLOW
     assert "'Table.ItemCount'" in DEPLOY_WORKFLOW
     assert "'KeyMetadata.KeyState'" in DEPLOY_WORKFLOW
+    assert DEPLOY_WORKFLOW.count("list-object-versions") == 3
+    assert DEPLOY_WORKFLOW.count("head-bucket") == 3
+    assert "ObjectLockConfiguration.ObjectLockEnabled" in DEPLOY_WORKFLOW
     assert 'index("delete")' in DEPLOY_WORKFLOW
 
 

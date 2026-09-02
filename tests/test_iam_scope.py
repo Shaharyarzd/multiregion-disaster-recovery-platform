@@ -122,7 +122,7 @@ def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
     assert DEPLOY_WORKFLOW.count("./scripts/apply-regional-stage.sh") == 2
     assert 'index("delete")' in DEPLOY_WORKFLOW
     assert "Refusing regional plan containing destroy or replacement actions" in STAGE_SCRIPT
-    assert 'stage_address=\'module.service.aws_apigatewayv2_stage.default[0]\'' in STAGE_SCRIPT
+    assert "stage_address='module.service.aws_apigatewayv2_stage.default[0]'" in STAGE_SCRIPT
     assert 'and $changes[0].change.actions == ["delete"]' in STAGE_SCRIPT
     assert (
         '--arg primary_api_id "$(terraform -chdir=terraform/stacks/region-a output -raw api_id)"'
@@ -146,7 +146,7 @@ def test_stage_tags_are_verified_before_traffic_and_failures_roll_back() -> None
         '-var="stage_traffic_enabled=true"'
     )
     assert "trap rollback_stage ERR" in STAGE_SCRIPT
-    assert "terraform -chdir=\"$stack_dir\" apply" in STAGE_SCRIPT
+    assert 'terraform -chdir="$stack_dir" apply' in STAGE_SCRIPT
     assert '"DataClassification": "SYNTHETIC"' in STAGE_SCRIPT
     assert '"Project": "portfolio-dr"' in STAGE_SCRIPT
     assert '"RegionRole": $region_role' in STAGE_SCRIPT

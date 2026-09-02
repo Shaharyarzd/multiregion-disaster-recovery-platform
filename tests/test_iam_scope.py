@@ -19,14 +19,17 @@ def test_deploy_mutation_exists_only_in_guarded_replica_bootstrap() -> None:
     infrastructure = DEPLOY.split('sid = "ManageProjectDynamoInfrastructure"', 1)[1].split(
         "\n  }", 1
     )[0]
-    for action in ("dynamodb:BatchWriteItem", "dynamodb:DeleteItem"):
-        assert action not in DEPLOY
+    assert "dynamodb:BatchWriteItem" not in DEPLOY
+    assert "dynamodb:DeleteItem" not in infrastructure
     assert "dynamodb:PutItem" not in infrastructure
     assert "dynamodb:UpdateItem" not in infrastructure
     temporary = DEPLOY.split('sid       = "TemporaryEmptySecondaryReplicaBootstrap"', 1)[1].split(
         "\n    }", 1
     )[0]
-    assert 'actions   = ["dynamodb:PutItem", "dynamodb:UpdateItem"]' in temporary
+    assert (
+        'actions   = ["dynamodb:DeleteItem", "dynamodb:PutItem", "dynamodb:UpdateItem"]'
+        in temporary
+    )
     assert "${var.secondary_region}" in temporary
     assert ":table/${var.resource_prefix}-transactions" in temporary
     assert "var.temporary_replica_update_item ? [1] : []" in DEPLOY

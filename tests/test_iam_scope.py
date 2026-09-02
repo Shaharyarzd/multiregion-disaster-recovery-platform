@@ -145,8 +145,8 @@ def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> 
         assert 'actions   = ["apigateway:POST"]' in statement
         assert statement.count(region) == 2
         assert "::/tags/arn%3Aaws%3Aapigateway%3A" in statement
-        assert "%3A%3A%2Fapis%2F*%2Fstages" in statement
-        assert "%2Fstages%2F*" not in statement
+        assert "%3A%3A%2Fapis%2F${statement.value}%2Fstages%2F%24default" in statement
+        assert "%2Fapis%2F*%2Fstages" not in statement
         assert 'variable = "aws:RequestTag/Project"' in statement
         assert 'variable = "aws:RequestTag/DataClassification"' in statement
         assert 'values   = ["SYNTHETIC"]' in statement
@@ -155,6 +155,9 @@ def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> 
         assert 'test     = "ForAllValues:StringEquals"' in statement
         assert 'variable = "aws:TagKeys"' in statement
         assert 'values   = ["Project", "RegionRole", "DataClassification"]' in statement
+
+    assert DEPLOY.count('for_each = var.primary_api_id == "" ? [] : [var.primary_api_id]') == 2
+    assert DEPLOY.count('for_each = var.secondary_api_id == "" ? [] : [var.secondary_api_id]') == 2
 
 
 def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> None:

@@ -10,8 +10,9 @@ tag-conditioned `POST /apis/*/stages` statement could not authorize creation saf
 two phases: create both APIs with stages disabled, capture their exact IDs in the preserved runtime
 context, install `POST` and `PUT` authority only on `/apis/{exact-api-id}/stages` through the
 bootstrap boundary, then
-rerun with stage provisioning enabled. Encoded tag-resource permissions remain request-tag and
-tag-key conditioned. Regional plans are rejected if they contain any delete or replacement action.
+rerun with stage provisioning enabled. Encoded tag-resource permissions use the exact API ID and
+`$default` stage ARN and remain request-tag and tag-key conditioned. Regional plans are rejected if
+they contain any delete or replacement action.
 
 - DynamoDB PITR restores to a new table and does not restore tags, alarms, streams, TTL, deletion
   protection, PITR, or global replicas automatically. Restore duration is variable. The target name

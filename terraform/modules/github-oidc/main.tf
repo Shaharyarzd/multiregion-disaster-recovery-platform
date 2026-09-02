@@ -167,54 +167,60 @@ data "aws_iam_policy_document" "deploy" {
       resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/apis/${statement.value}/stages"]
     }
   }
-  statement {
-    sid       = "TagPrimaryPortfolioHttpApiStageOnCreate"
-    actions   = ["apigateway:POST"]
-    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.primary_region}%3A%3A%2Fapis%2F*%2Fstages"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/Project"
-      values   = [var.resource_prefix]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/DataClassification"
-      values   = ["SYNTHETIC"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/RegionRole"
-      values   = ["active-a"]
-    }
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "aws:TagKeys"
-      values   = ["Project", "RegionRole", "DataClassification"]
+  dynamic "statement" {
+    for_each = var.primary_api_id == "" ? [] : [var.primary_api_id]
+    content {
+      sid       = "TagPrimaryPortfolioHttpApiStageOnCreate"
+      actions   = ["apigateway:POST"]
+      resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.primary_region}%3A%3A%2Fapis%2F${statement.value}%2Fstages%2F%24default"]
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/Project"
+        values   = [var.resource_prefix]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/DataClassification"
+        values   = ["SYNTHETIC"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/RegionRole"
+        values   = ["active-a"]
+      }
+      condition {
+        test     = "ForAllValues:StringEquals"
+        variable = "aws:TagKeys"
+        values   = ["Project", "RegionRole", "DataClassification"]
+      }
     }
   }
-  statement {
-    sid       = "TagSecondaryPortfolioHttpApiStageOnCreate"
-    actions   = ["apigateway:POST"]
-    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.secondary_region}%3A%3A%2Fapis%2F*%2Fstages"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/Project"
-      values   = [var.resource_prefix]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/DataClassification"
-      values   = ["SYNTHETIC"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/RegionRole"
-      values   = ["active-b"]
-    }
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "aws:TagKeys"
-      values   = ["Project", "RegionRole", "DataClassification"]
+  dynamic "statement" {
+    for_each = var.secondary_api_id == "" ? [] : [var.secondary_api_id]
+    content {
+      sid       = "TagSecondaryPortfolioHttpApiStageOnCreate"
+      actions   = ["apigateway:POST"]
+      resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.secondary_region}%3A%3A%2Fapis%2F${statement.value}%2Fstages%2F%24default"]
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/Project"
+        values   = [var.resource_prefix]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/DataClassification"
+        values   = ["SYNTHETIC"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/RegionRole"
+        values   = ["active-b"]
+      }
+      condition {
+        test     = "ForAllValues:StringEquals"
+        variable = "aws:TagKeys"
+        values   = ["Project", "RegionRole", "DataClassification"]
+      }
     }
   }
   statement {

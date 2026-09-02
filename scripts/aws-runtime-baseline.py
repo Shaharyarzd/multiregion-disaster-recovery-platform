@@ -35,8 +35,10 @@ def request_json(url: str, method: str = "GET", body: dict[str, object] | None =
         ".execute-api.us-east-1.amazonaws.com",
         ".execute-api.us-west-2.amazonaws.com",
     )
-    if parsed.scheme != "https" or not parsed.hostname or not parsed.hostname.endswith(
-        allowed_suffixes
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or not parsed.hostname.endswith(allowed_suffixes)
     ):
         raise ValueError("runtime request target is not an approved regional API endpoint")
     data = json.dumps(body).encode() if body is not None else None
@@ -115,9 +117,7 @@ def main() -> None:
         baseline = list(executor.map(lambda item: create(*item), seeds))
 
     convergence = []
-    for transaction, destination in zip(
-        baseline, (args.region_b, args.region_a), strict=True
-    ):
+    for transaction, destination in zip(baseline, (args.region_b, args.region_a), strict=True):
         observation = observe(destination, str(transaction["transaction_id"]))
         source = datetime.fromisoformat(str(transaction["timestamp"]).replace("Z", "+00:00"))
         observed_text = observation["observed_at"]

@@ -165,8 +165,9 @@ def test_stage_tags_are_verified_before_traffic_and_failures_roll_back() -> None
     assert STAGE_SCRIPT.index('-var="stage_traffic_enabled=false"') < STAGE_SCRIPT.index(
         "verify_exact_tags stage-tag-verify.tfplan"
     )
-    assert STAGE_SCRIPT.index("verify_exact_tags stage-tag-verify.tfplan") < STAGE_SCRIPT.index(
-        '-var="stage_traffic_enabled=true"'
+    tag_verified_at = STAGE_SCRIPT.index("verify_exact_tags stage-tag-verify.tfplan")
+    assert tag_verified_at < STAGE_SCRIPT.index(
+        '-var="stage_traffic_enabled=true"', tag_verified_at
     )
     assert "trap rollback_stage ERR" in STAGE_SCRIPT
     assert 'terraform -chdir="$stack_dir" apply' in STAGE_SCRIPT

@@ -24,6 +24,26 @@ variable "evidence_environment" { type = string }
 variable "resource_prefix" { type = string }
 variable "primary_region" { type = string }
 variable "secondary_region" { type = string }
+variable "primary_api_id" {
+  type        = string
+  default     = ""
+  description = "Exact Region A API ID captured during phase one; empty disables stage-create authority."
+
+  validation {
+    condition     = var.primary_api_id == "" || can(regex("^[a-z0-9]+$", var.primary_api_id))
+    error_message = "primary_api_id must be empty or an exact lowercase alphanumeric API ID."
+  }
+}
+variable "secondary_api_id" {
+  type        = string
+  default     = ""
+  description = "Exact Region B API ID captured during phase one; empty disables stage-create authority."
+
+  validation {
+    condition     = var.secondary_api_id == "" || can(regex("^[a-z0-9]+$", var.secondary_api_id))
+    error_message = "secondary_api_id must be empty or an exact lowercase alphanumeric API ID."
+  }
+}
 variable "temporary_replica_update_item" {
   type        = bool
   default     = false

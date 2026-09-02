@@ -94,6 +94,7 @@ resource "aws_apigatewayv2_route" "routes" {
 }
 
 resource "aws_apigatewayv2_stage" "default" {
+  count       = var.create_stage ? 1 : 0
   api_id      = aws_apigatewayv2_api.app.id
   name        = "$default"
   auto_deploy = true

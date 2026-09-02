@@ -12,6 +12,11 @@ on:
         required: false
         default: ""
         type: string
+      provision_stages:
+        description: Phase two only; enable after exact API-ID IAM scope is installed
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -92,19 +97,35 @@ jobs:
 
       - name: Apply Region A
         working-directory: terraform/stacks/region-a
+        env:
+          PROVISION_STAGES: ${{ inputs.provision_stages }}
         run: |
           terraform init -input=false
-          terraform apply -input=false -auto-approve \
+          terraform plan -input=false -out=region-a.tfplan \
             -var="table_name=$(terraform -chdir=../global output -raw table_name)" \
-            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)"
+            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)" \
+            -var="create_stage=$PROVISION_STAGES"
+          if terraform show -json region-a.tfplan | jq -e 'any(.resource_changes[]?; (.change.actions | index("delete")) != null)' >/dev/null; then
+            echo "Refusing Region A plan containing destroy or replacement actions" >&2
+            exit 1
+          fi
+          terraform apply -input=false -auto-approve region-a.tfplan
 
       - name: Apply Region B
         working-directory: terraform/stacks/region-b
+        env:
+          PROVISION_STAGES: ${{ inputs.provision_stages }}
         run: |
           terraform init -input=false
-          terraform apply -input=false -auto-approve \
+          terraform plan -input=false -out=region-b.tfplan \
             -var="table_name=$(terraform -chdir=../global output -raw table_name)" \
-            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)"
+            -var="table_arn=$(terraform -chdir=../global output -raw table_arn)" \
+            -var="create_stage=$PROVISION_STAGES"
+          if terraform show -json region-b.tfplan | jq -e 'any(.resource_changes[]?; (.change.actions | index("delete")) != null)' >/dev/null; then
+            echo "Refusing Region B plan containing destroy or replacement actions" >&2
+            exit 1
+          fi
+          terraform apply -input=false -auto-approve region-b.tfplan
 
       - name: Capture non-secret runtime context
         run: |
@@ -118,9 +139,12 @@ jobs:
             --arg secondary_bucket "$(terraform -chdir=terraform/stacks/global output -raw secondary_bucket)" \
             --arg evidence_bucket "$(terraform -chdir=terraform/stacks/global output -raw evidence_bucket)" \
             --arg evidence_signing_key_arn "$(terraform -chdir=terraform/stacks/global output -raw evidence_signing_key_arn)" \
+            --arg primary_api_id "$(terraform -chdir=terraform/stacks/region-a output -raw api_id)" \
+            --arg secondary_api_id "$(terraform -chdir=terraform/stacks/region-b output -raw api_id)" \
             --arg primary_api "$(terraform -chdir=terraform/stacks/region-a output -raw api_endpoint)" \
             --arg secondary_api "$(terraform -chdir=terraform/stacks/region-b output -raw api_endpoint)" \
-            '{account_id:$account_id,primary_region:$primary_region,secondary_region:$secondary_region,table_name:$table_name,table_arn:$table_arn,primary_bucket:$primary_bucket,secondary_bucket:$secondary_bucket,evidence_bucket:$evidence_bucket,evidence_signing_key_arn:$evidence_signing_key_arn,primary_api:$primary_api,secondary_api:$secondary_api}' \
+            --argjson stages_provisioned "${{ inputs.provision_stages }}" \
+            '{account_id:$account_id,primary_region:$primary_region,secondary_region:$secondary_region,table_name:$table_name,table_arn:$table_arn,primary_bucket:$primary_bucket,secondary_bucket:$secondary_bucket,evidence_bucket:$evidence_bucket,evidence_signing_key_arn:$evidence_signing_key_arn,primary_api_id:$primary_api_id,secondary_api_id:$secondary_api_id,primary_api:$primary_api,secondary_api:$secondary_api,stages_provisioned:$stages_provisioned}' \
             > runtime-context.json
 
       - name: Preserve Terraform state and runtime context

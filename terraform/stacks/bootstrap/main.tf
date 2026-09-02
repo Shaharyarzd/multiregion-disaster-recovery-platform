@@ -19,6 +19,8 @@ module "github_oidc" {
   resource_prefix               = var.name
   primary_region                = var.primary_region
   secondary_region              = var.secondary_region
+  primary_api_id                = var.primary_api_id
+  secondary_api_id              = var.secondary_api_id
   temporary_replica_update_item = var.temporary_replica_update_item
   tags                          = local.tags
 }

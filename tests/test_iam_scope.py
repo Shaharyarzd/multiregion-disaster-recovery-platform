@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "terraform/modules/github-oidc/main.tf").read_text(encoding="utf-8")
 DEPLOY_WORKFLOW = (ROOT / ".github/workflows/aws-deploy.yml").read_text(encoding="utf-8")
+REGIONAL_SERVICE = (ROOT / "terraform/modules/regional-service/main.tf").read_text(encoding="utf-8")
 DEPLOY = SOURCE.split('data "aws_iam_policy_document" "deploy"', 1)[1].split(
     'resource "aws_iam_role_policy" "deploy"', 1
 )[0]
@@ -104,28 +105,27 @@ def test_cloudwatch_alarm_tag_read_is_two_region_and_prefix_scoped() -> None:
     assert "cloudwatch:*:" not in statement
 
 
-def test_api_stage_creation_is_region_and_required_tag_scoped() -> None:
-    primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApiStage"', 1)[1].split(
-        "\n  }", 1
-    )[0]
-    secondary = DEPLOY.split('sid       = "CreateTaggedSecondaryPortfolioHttpApiStage"', 1)[
-        1
-    ].split("\n  }", 1)[0]
-    for statement, region, role in (
-        (primary, "${var.primary_region}", "active-a"),
-        (secondary, "${var.secondary_region}", "active-b"),
-    ):
-        assert 'actions   = ["apigateway:POST"]' in statement
-        assert f"apigateway:{region}::/apis/*/stages" in statement
-        assert "/stages/*" not in statement
-        assert 'variable = "aws:RequestTag/Project"' in statement
-        assert 'variable = "aws:RequestTag/DataClassification"' in statement
-        assert 'values   = ["SYNTHETIC"]' in statement
-        assert 'variable = "aws:RequestTag/RegionRole"' in statement
-        assert f'values   = ["{role}"]' in statement
-        assert 'test     = "ForAllValues:StringEquals"' in statement
-        assert 'variable = "aws:TagKeys"' in statement
-        assert 'values   = ["Project", "RegionRole", "DataClassification"]' in statement
+def test_api_stage_creation_uses_only_captured_exact_api_ids() -> None:
+    assert "::/apis/*/stages" not in DEPLOY
+    assert 'for_each = var.primary_api_id == "" ? [] : [var.primary_api_id]' in DEPLOY
+    assert 'for_each = var.secondary_api_id == "" ? [] : [var.secondary_api_id]' in DEPLOY
+    assert (
+        "apigateway:${var.primary_region}::/apis/${statement.value}/stages" in DEPLOY
+    )
+    assert (
+        "apigateway:${var.secondary_region}::/apis/${statement.value}/stages" in DEPLOY
+    )
+
+
+def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
+    assert "provision_stages:" in DEPLOY_WORKFLOW
+    assert 'default: false' in DEPLOY_WORKFLOW
+    assert DEPLOY_WORKFLOW.count('-var="create_stage=$PROVISION_STAGES"') == 2
+    assert DEPLOY_WORKFLOW.count("Refusing Region") == 2
+    assert DEPLOY_WORKFLOW.count('index("delete")') >= 3
+    assert '--arg primary_api_id "$(terraform -chdir=terraform/stacks/region-a output -raw api_id)"' in DEPLOY_WORKFLOW
+    assert '--arg secondary_api_id "$(terraform -chdir=terraform/stacks/region-b output -raw api_id)"' in DEPLOY_WORKFLOW
+    assert 'count       = var.create_stage ? 1 : 0' in REGIONAL_SERVICE
 
 
 def test_api_stage_tag_on_create_is_encoded_region_and_required_tag_scoped() -> None:

@@ -12,10 +12,11 @@ module "service" {
   table_name    = var.table_name
   table_arn     = var.table_arn
   artifact_path = var.artifact_path
+  create_stage  = var.create_stage
   tags          = local.tags
 }
 locals {
   tags = { Project = var.name, RegionRole = "active-b", DataClassification = "SYNTHETIC" }
 }
 output "api_endpoint" { value = module.service.api_endpoint }
-
+output "api_id" { value = module.service.api_id }

@@ -10,6 +10,16 @@ variable "secondary_region" {
   type    = string
   default = "us-west-2"
 }
+variable "primary_api_id" {
+  type        = string
+  default     = ""
+  description = "Exact Region A API ID captured by the API-only deployment phase."
+}
+variable "secondary_api_id" {
+  type        = string
+  default     = ""
+  description = "Exact Region B API ID captured by the API-only deployment phase."
+}
 variable "github_repository" {
   type        = string
   description = "GitHub owner/repository; no repository is created by Terraform."

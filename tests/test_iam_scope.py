@@ -148,11 +148,14 @@ def test_lambda_runtime_uses_only_its_regional_table_and_data_key() -> None:
         '            "$(terraform -chdir=terraform/stacks/global output -raw primary_kms_key_arn)"'
         in DEPLOY_WORKFLOW
     )
-    assert (
+    secondary_table = (
         '"$(terraform -chdir=terraform/stacks/global output -raw secondary_table_arn)" \\\n'
-        '            "$(terraform -chdir=terraform/stacks/global output -raw secondary_kms_key_arn)"'
-        in DEPLOY_WORKFLOW
     )
+    secondary_key = (
+        '            "$(terraform -chdir=terraform/stacks/global '
+        'output -raw secondary_kms_key_arn)"'
+    )
+    assert secondary_table + secondary_key in DEPLOY_WORKFLOW
 
 
 def test_stage_tags_are_verified_before_traffic_and_failures_roll_back() -> None:

@@ -5,7 +5,7 @@
     "deploy": {
       "actions": [
         "apigateway:DELETE", "apigateway:GET", "apigateway:PATCH", "apigateway:POST", "apigateway:PUT",
-        "cloudwatch:DeleteAlarms", "cloudwatch:DeleteDashboards", "cloudwatch:DescribeAlarms", "cloudwatch:GetDashboard", "cloudwatch:PutDashboard", "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms", "cloudwatch:DeleteDashboards", "cloudwatch:DescribeAlarms", "cloudwatch:GetDashboard", "cloudwatch:ListTagsForResource", "cloudwatch:PutDashboard", "cloudwatch:PutMetricAlarm",
         "dynamodb:CreateTable", "dynamodb:DeleteTable", "dynamodb:DescribeContinuousBackups", "dynamodb:DescribeTable", "dynamodb:DescribeTimeToLive", "dynamodb:ListTagsOfResource", "dynamodb:TagResource", "dynamodb:UntagResource", "dynamodb:UpdateContinuousBackups", "dynamodb:UpdateTable",
         "iam:CreateRole", "iam:DeleteRole", "iam:DeleteRolePolicy", "iam:GetRole", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:ListRolePolicies", "iam:PassRole", "iam:PutRolePolicy", "iam:TagRole", "iam:UntagRole", "iam:UpdateAssumeRolePolicy",
         "kms:CreateAlias", "kms:CreateGrant", "kms:CreateKey", "kms:DeleteAlias", "kms:DescribeKey", "kms:EnableKeyRotation", "kms:GetKeyPolicy", "kms:GetKeyRotationStatus", "kms:ListAliases", "kms:ListGrants", "kms:ListResourceTags", "kms:PutKeyPolicy", "kms:ScheduleKeyDeletion", "kms:TagResource", "kms:UntagResource", "kms:UpdateAlias", "kms:UpdateKeyDescription",

@@ -52,13 +52,103 @@ data "aws_iam_policy_document" "deploy" {
     resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis*"]
   }
   statement {
-    sid       = "CreateTaggedPortfolioHttpApis"
+    sid       = "CreateTaggedPrimaryPortfolioHttpApi"
     actions   = ["apigateway:POST"]
-    resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/apis"]
     condition {
       test     = "StringEquals"
       variable = "aws:RequestTag/Project"
       values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/DataClassification"
+      values   = ["SYNTHETIC"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/RegionRole"
+      values   = ["active-a"]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project", "RegionRole", "DataClassification"]
+    }
+  }
+  statement {
+    sid       = "CreateTaggedSecondaryPortfolioHttpApi"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/apis"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/DataClassification"
+      values   = ["SYNTHETIC"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/RegionRole"
+      values   = ["active-b"]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project", "RegionRole", "DataClassification"]
+    }
+  }
+  statement {
+    sid       = "TagPrimaryPortfolioHttpApiOnCreate"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.primary_region}%3A%3A%2Fv2%2Fapis%2F*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/DataClassification"
+      values   = ["SYNTHETIC"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/RegionRole"
+      values   = ["active-a"]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project", "RegionRole", "DataClassification"]
+    }
+  }
+  statement {
+    sid       = "TagSecondaryPortfolioHttpApiOnCreate"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/tags/arn%3Aaws%3Aapigateway%3A${var.secondary_region}%3A%3A%2Fv2%2Fapis%2F*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/DataClassification"
+      values   = ["SYNTHETIC"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/RegionRole"
+      values   = ["active-b"]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project", "RegionRole", "DataClassification"]
     }
   }
   statement {
@@ -80,9 +170,13 @@ data "aws_iam_policy_document" "deploy" {
     sid = "ManagePortfolioAlarms"
     actions = [
       "cloudwatch:DeleteAlarms",
+      "cloudwatch:ListTagsForResource",
       "cloudwatch:PutMetricAlarm",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:cloudwatch:*:${data.aws_caller_identity.current.account_id}:alarm:${var.resource_prefix}-*"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:cloudwatch:${var.primary_region}:${data.aws_caller_identity.current.account_id}:alarm:${var.resource_prefix}-*",
+      "arn:${data.aws_partition.current.partition}:cloudwatch:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:alarm:${var.resource_prefix}-*",
+    ]
   }
   statement {
     sid = "ManagePortfolioDashboards"

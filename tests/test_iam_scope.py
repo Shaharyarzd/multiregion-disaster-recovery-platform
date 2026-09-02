@@ -62,6 +62,48 @@ def test_resume_repairs_only_verified_tainted_resources_and_blocks_destroy() -> 
     assert 'index("delete")' in DEPLOY_WORKFLOW
 
 
+def test_api_tag_on_create_is_region_and_required_tag_scoped() -> None:
+    create_primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApi"', 1)[
+        1
+    ].split("\n  }", 1)[0]
+    create_secondary = DEPLOY.split('sid       = "CreateTaggedSecondaryPortfolioHttpApi"', 1)[
+        1
+    ].split("\n  }", 1)[0]
+    primary = DEPLOY.split('sid       = "TagPrimaryPortfolioHttpApiOnCreate"', 1)[1].split(
+        "\n  }", 1
+    )[0]
+    secondary = DEPLOY.split('sid       = "TagSecondaryPortfolioHttpApiOnCreate"', 1)[1].split(
+        "\n  }", 1
+    )[0]
+    for statement in (create_primary, primary):
+        assert "${var.primary_region}" in statement
+        assert 'values   = ["active-a"]' in statement
+    for statement in (create_secondary, secondary):
+        assert "${var.secondary_region}" in statement
+        assert 'values   = ["active-b"]' in statement
+    assert "%2Fv2%2Fapis%2F*" in primary
+    assert "%2Fv2%2Fapis%2F*" in secondary
+    assert "::/apis" in create_primary
+    assert "::/apis" in create_secondary
+    for statement in (create_primary, create_secondary, primary, secondary):
+        assert 'actions   = ["apigateway:POST"]' in statement
+        assert 'variable = "aws:RequestTag/Project"' in statement
+        assert 'variable = "aws:RequestTag/DataClassification"' in statement
+        assert 'values   = ["SYNTHETIC"]' in statement
+        assert 'test     = "ForAllValues:StringEquals"' in statement
+        assert 'variable = "aws:TagKeys"' in statement
+        assert 'values   = ["Project", "RegionRole", "DataClassification"]' in statement
+
+
+def test_cloudwatch_alarm_tag_read_is_two_region_and_prefix_scoped() -> None:
+    statement = DEPLOY.split('sid = "ManagePortfolioAlarms"', 1)[1].split("\n  }", 1)[0]
+    assert '"cloudwatch:ListTagsForResource"' in statement
+    assert statement.count("alarm:${var.resource_prefix}-*") == 2
+    assert "cloudwatch:${var.primary_region}:" in statement
+    assert "cloudwatch:${var.secondary_region}:" in statement
+    assert "cloudwatch:*:" not in statement
+
+
 def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> None:
     statement = RECOVERY.split('sid = "ApprovalGatedSyntheticProductionReconciliation"', 1)[
         1

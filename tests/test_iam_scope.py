@@ -104,6 +104,30 @@ def test_cloudwatch_alarm_tag_read_is_two_region_and_prefix_scoped() -> None:
     assert "cloudwatch:*:" not in statement
 
 
+def test_api_stage_creation_is_region_and_required_tag_scoped() -> None:
+    primary = DEPLOY.split('sid       = "CreateTaggedPrimaryPortfolioHttpApiStage"', 1)[
+        1
+    ].split("\n  }", 1)[0]
+    secondary = DEPLOY.split('sid       = "CreateTaggedSecondaryPortfolioHttpApiStage"', 1)[
+        1
+    ].split("\n  }", 1)[0]
+    for statement, region, role in (
+        (primary, "${var.primary_region}", "active-a"),
+        (secondary, "${var.secondary_region}", "active-b"),
+    ):
+        assert 'actions   = ["apigateway:POST"]' in statement
+        assert f"apigateway:{region}::/apis/*/stages" in statement
+        assert "/stages/*" not in statement
+        assert 'variable = "aws:RequestTag/Project"' in statement
+        assert 'variable = "aws:RequestTag/DataClassification"' in statement
+        assert 'values   = ["SYNTHETIC"]' in statement
+        assert 'variable = "aws:RequestTag/RegionRole"' in statement
+        assert f'values   = ["{role}"]' in statement
+        assert 'test     = "ForAllValues:StringEquals"' in statement
+        assert 'variable = "aws:TagKeys"' in statement
+        assert 'values   = ["Project", "RegionRole", "DataClassification"]' in statement
+
+
 def test_recovery_mutation_is_exact_table_region_and_synthetic_key_scoped() -> None:
     statement = RECOVERY.split('sid = "ApprovalGatedSyntheticProductionReconciliation"', 1)[
         1

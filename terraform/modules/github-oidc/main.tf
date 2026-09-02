@@ -152,6 +152,56 @@ data "aws_iam_policy_document" "deploy" {
     }
   }
   statement {
+    sid       = "CreateTaggedPrimaryPortfolioHttpApiStage"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.primary_region}::/apis/*/stages"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/DataClassification"
+      values   = ["SYNTHETIC"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/RegionRole"
+      values   = ["active-a"]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project", "RegionRole", "DataClassification"]
+    }
+  }
+  statement {
+    sid       = "CreateTaggedSecondaryPortfolioHttpApiStage"
+    actions   = ["apigateway:POST"]
+    resources = ["arn:${data.aws_partition.current.partition}:apigateway:${var.secondary_region}::/apis/*/stages"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/Project"
+      values   = [var.resource_prefix]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/DataClassification"
+      values   = ["SYNTHETIC"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/RegionRole"
+      values   = ["active-b"]
+    }
+    condition {
+      test     = "ForAllValues:StringEquals"
+      variable = "aws:TagKeys"
+      values   = ["Project", "RegionRole", "DataClassification"]
+    }
+  }
+  statement {
     sid       = "ManageTaggedPortfolioHttpApis"
     actions   = ["apigateway:DELETE", "apigateway:PATCH", "apigateway:POST", "apigateway:PUT"]
     resources = ["arn:${data.aws_partition.current.partition}:apigateway:*::/apis/*"]

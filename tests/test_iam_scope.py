@@ -123,8 +123,14 @@ def test_deployment_is_two_phase_and_rejects_regional_destroy() -> None:
     assert DEPLOY_WORKFLOW.count('-var="create_stage=$PROVISION_STAGES"') == 2
     assert DEPLOY_WORKFLOW.count("Refusing Region") == 2
     assert DEPLOY_WORKFLOW.count('index("delete")') >= 3
-    assert '--arg primary_api_id "$(terraform -chdir=terraform/stacks/region-a output -raw api_id)"' in DEPLOY_WORKFLOW
-    assert '--arg secondary_api_id "$(terraform -chdir=terraform/stacks/region-b output -raw api_id)"' in DEPLOY_WORKFLOW
+    assert (
+        '--arg primary_api_id "$(terraform -chdir=terraform/stacks/region-a output -raw api_id)"'
+        in DEPLOY_WORKFLOW
+    )
+    assert (
+        '--arg secondary_api_id "$(terraform -chdir=terraform/stacks/region-b output -raw api_id)"'
+        in DEPLOY_WORKFLOW
+    )
     assert 'count       = var.create_stage ? 1 : 0' in REGIONAL_SERVICE
 
 

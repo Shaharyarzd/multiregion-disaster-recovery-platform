@@ -99,15 +99,26 @@ def main() -> None:
         incident.runtime_evidence.setdefault("measurement_caveats", {})["rto"] = (
             "LOWER_BOUND_FROM_ORIGINAL_GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND"
         )
-        incident.runtime_evidence.setdefault("failed_attempts", []).append(
-            {
-                "status": "FAIL",
-                "github_run_id": "34106549635",
-                "failed_at": "2026-09-07T09:34:36.012040Z",
-                "phase": "EvidenceSigning",
-                "failure_code": "UNRECOGNIZED_RETRY_TIMESTAMP_AUTHORITY",
-                "archive_objects_created": False,
-            }
+        incident.runtime_evidence.setdefault("failed_attempts", []).extend(
+            [
+                {
+                    "status": "FAIL",
+                    "github_run_id": "34106549635",
+                    "failed_at": "2026-09-07T09:34:36.012040Z",
+                    "phase": "EvidenceSigning",
+                    "failure_code": "UNRECOGNIZED_RETRY_TIMESTAMP_AUTHORITY",
+                    "archive_objects_created": False,
+                },
+                {
+                    "status": "FAIL",
+                    "github_run_id": "34107974647",
+                    "failed_at": "2026-09-07T09:50:04.054712Z",
+                    "phase": "EvidenceExactVersionReadBack",
+                    "failure_code": "MISSING_S3_GET_OBJECT_VERSION",
+                    "archive_objects_created": True,
+                    "partial_archive": "SIGNED_REPORT_VERSION_ONLY",
+                },
+            ]
         )
     signer = KmsEvidenceSigner(REGION, SIGNING_KEY)
     report = build_report(incident, signer)

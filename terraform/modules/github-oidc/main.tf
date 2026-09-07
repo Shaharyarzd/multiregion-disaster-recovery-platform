@@ -677,6 +677,11 @@ data "aws_iam_policy_document" "evidence" {
     ]
   }
   statement {
+    sid       = "ReadExactEvidenceObjectVersions"
+    actions   = ["s3:GetObjectVersion"]
+    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.resource_prefix}-293951765338-evidence/evidence/*"]
+  }
+  statement {
     sid       = "NeverBypassEvidenceRetention"
     effect    = "Deny"
     actions   = ["s3:BypassGovernanceRetention"]

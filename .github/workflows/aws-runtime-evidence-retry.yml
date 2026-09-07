@@ -1,0 +1,75 @@
+name: AWS runtime evidence-only retry
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type ARCHIVE_EXISTING_EVIDENCE
+        required: true
+        type: string
+      source_run_id:
+        description: Completed Scenario B run containing the exact state artifact
+        required: true
+        default: "34106549635"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    environment: aws-evidence-approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Enforce evidence-only confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "ARCHIVE_EXISTING_EVIDENCE"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: aws-runtime-scenario-b-${{ inputs.source_run_id }}
+          path: evidence
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install controller with AWS adapter
+        run: python -m pip install --disable-pip-version-check '.[aws]'
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_EVIDENCE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: KMS sign and Object Lock archive exact completed evidence
+        run: |
+          python scripts/aws-runtime-evidence.py \
+            --work-dir evidence/scenario-b-state \
+            --output-dir evidence/final
+
+      - name: Enforce immutable archive proof
+        run: |
+          jq -e '.status == "PASS" and .kms_signature_verified_after_read_back == true' \
+            evidence/final/archive-proof.json >/dev/null
+          jq -e '.objects | to_entries | all(.value.retention_mode == "GOVERNANCE")' \
+            evidence/final/archive-proof.json >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aws-runtime-final-evidence-${{ github.run_id }}
+          path: evidence/final/
+          if-no-files-found: error
+          retention-days: 7

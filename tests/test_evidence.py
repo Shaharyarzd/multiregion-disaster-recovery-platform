@@ -114,6 +114,49 @@ def test_aws_runtime_requires_signer_after_trusted_clock_inputs(declared) -> Non
     assert build_report(incident, SignerForAws())["integrity"]["signature"]["status"] == "SIGNED"
 
 
+def test_aws_runtime_accepts_bounded_retry_provenance(declared) -> None:
+    _, incident = declared
+    incident.evidence_scope = "AWS_RUNTIME"
+    incident.clock_skew_ms_observed = 100
+    incident.declared_at = incident.failure_at + timedelta(minutes=5)
+    incident.timestamp_sources = {
+        "incident_declaration": "CONTROLLER_UTC_SYNCED",
+        "failure_or_corruption": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+        "validation": "CONTROLLER_UTC_SYNCED",
+        "recovered_transaction": "DYNAMODB_PITR_READBACK_UTC_VALIDATED",
+    }
+    incident.runtime_evidence["measurement_bounds"] = {
+        "rto_start": {
+            "timestamp": incident.failure_at.isoformat(),
+            "source": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+            "classification": "LOWER_BOUND",
+        }
+    }
+    report = build_report(incident, SignerForAws())
+    assert report["measurements"]["rto"]["classification"] == "LOWER_BOUND"
+    assert report["timestamps"]["incident_declared"] != report["measurements"]["rto"]["start"]
+
+
+def test_aws_runtime_rejects_inconsistent_rto_bound(declared) -> None:
+    _, incident = declared
+    incident.evidence_scope = "AWS_RUNTIME"
+    incident.clock_skew_ms_observed = 100
+    incident.timestamp_sources = {
+        "incident_declaration": "CONTROLLER_UTC_SYNCED",
+        "failure_or_corruption": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+        "validation": "CONTROLLER_UTC_SYNCED",
+        "recovered_transaction": "DYNAMODB_PITR_READBACK_UTC_VALIDATED",
+    }
+    incident.runtime_evidence["measurement_bounds"] = {
+        "rto_start": {
+            "timestamp": (incident.failure_at - timedelta(seconds=1)).isoformat(),
+            "source": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+        }
+    }
+    with pytest.raises(EvidenceIntegrityError, match="inconsistent"):
+        build_report(incident, SignerForAws())
+
+
 def test_optional_signer_is_recorded_without_claiming_local_immutability(declared) -> None:
     class Signer:
         def sign_digest(self, digest_hex: str) -> dict[str, str]:

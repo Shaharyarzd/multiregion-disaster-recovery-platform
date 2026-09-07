@@ -72,6 +72,43 @@ def main() -> None:
     if identity["Account"] != ACCOUNT:
         raise RuntimeError("wrong AWS account")
     incident = LocalIncidentStore(args.work_dir).load()
+    if incident.timestamp_sources.get("incident_declaration") == "RETRY_CONTROLLER_UTC_SYNCED":
+        failure_bound = incident.runtime_evidence.get("fault", {}).get("failure_upper_bound")
+        if (
+            not failure_bound
+            or incident.timestamp_sources.get("failure_or_corruption")
+            != "BOUNDED_BY_TRANSACTION_AND_GITHUB_JOB_LOG"
+        ):
+            raise RuntimeError("cannot normalize retry timestamp provenance")
+        normalized = datetime.fromisoformat(str(failure_bound).replace("Z", "+00:00"))
+        if normalized != incident.failure_at:
+            raise RuntimeError("retry failure bound does not match persisted incident")
+        incident.timestamp_sources.update(
+            {
+                "incident_declaration": "CONTROLLER_UTC_SYNCED",
+                "failure_or_corruption": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+            }
+        )
+        incident.runtime_evidence["measurement_bounds"] = {
+            "rto_start": {
+                "timestamp": failure_bound,
+                "source": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+                "classification": "LOWER_BOUND",
+            }
+        }
+        incident.runtime_evidence.setdefault("measurement_caveats", {})["rto"] = (
+            "LOWER_BOUND_FROM_ORIGINAL_GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND"
+        )
+        incident.runtime_evidence.setdefault("failed_attempts", []).append(
+            {
+                "status": "FAIL",
+                "github_run_id": "34106549635",
+                "failed_at": "2026-09-07T09:34:36.012040Z",
+                "phase": "EvidenceSigning",
+                "failure_code": "UNRECOGNIZED_RETRY_TIMESTAMP_AUTHORITY",
+                "archive_objects_created": False,
+            }
+        )
     signer = KmsEvidenceSigner(REGION, SIGNING_KEY)
     report = build_report(incident, signer)
     if not verify_report(report, signer):

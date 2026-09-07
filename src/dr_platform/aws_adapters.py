@@ -146,8 +146,7 @@ class DynamoRecoveryAdapter:
             no_replicas=not bool(refreshed.get("Replicas")),
             deletion_protection=refreshed.get("DeletionProtectionEnabled") is True,
             billing_mode_verified=(
-                refreshed.get("BillingModeSummary", {}).get("BillingMode")
-                == "PAY_PER_REQUEST"
+                refreshed.get("BillingModeSummary", {}).get("BillingMode") == "PAY_PER_REQUEST"
             ),
         )
 

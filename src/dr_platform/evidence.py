@@ -17,9 +17,16 @@ SCHEMA_VERSION = "2.1.0"
 SENSITIVE_KEY = re.compile(r"(secret|token|password|authorization|credential)", re.IGNORECASE)
 AWS_TRUSTED_TIMESTAMP_SOURCES = {
     "incident_declaration": {"CONTROLLER_UTC_SYNCED", "AWS_EVENT_TIMESTAMP"},
-    "failure_or_corruption": {"FAULT_INJECTOR_UTC_SYNCED", "AWS_CLOUDTRAIL_EVENT"},
+    "failure_or_corruption": {
+        "FAULT_INJECTOR_UTC_SYNCED",
+        "AWS_CLOUDTRAIL_EVENT",
+        "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+    },
     "validation": {"CONTROLLER_UTC_SYNCED"},
-    "recovered_transaction": {"DYNAMODB_TRANSACTION_UTC_VALIDATED"},
+    "recovered_transaction": {
+        "DYNAMODB_TRANSACTION_UTC_VALIDATED",
+        "DYNAMODB_PITR_READBACK_UTC_VALIDATED",
+    },
 }
 
 
@@ -43,11 +50,21 @@ def redact(value: Any) -> Any:
 
 
 def _measurement_inputs(incident: Incident, newest: str | None) -> dict[str, Any]:
-    rto = (
-        measured_rto_seconds(incident.declared_at, incident.rto_end_at)
-        if incident.rto_end_at
-        else None
-    )
+    rto_start = incident.declared_at
+    rto_start_source = incident.timestamp_sources.get("incident_declaration")
+    rto_classification = "OBSERVED"
+    rto_bound = incident.runtime_evidence.get("measurement_bounds", {}).get("rto_start")
+    if incident.evidence_scope == "AWS_RUNTIME" and isinstance(rto_bound, dict):
+        if rto_bound.get("source") != "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND":
+            raise EvidenceIntegrityError("AWS_RUNTIME evidence has untrusted RTO bound authority")
+        rto_start = datetime.fromisoformat(str(rto_bound["timestamp"]).replace("Z", "+00:00"))
+        if rto_start != incident.failure_at or rto_start > incident.declared_at:
+            raise EvidenceIntegrityError(
+                "AWS_RUNTIME RTO bound is inconsistent with incident state"
+            )
+        rto_start_source = rto_bound["source"]
+        rto_classification = "LOWER_BOUND"
+    rto = measured_rto_seconds(rto_start, incident.rto_end_at) if incident.rto_end_at else None
     rpo = None
     if newest:
         newest_time = datetime.fromisoformat(newest.replace("Z", "+00:00"))
@@ -64,8 +81,9 @@ def _measurement_inputs(incident: Incident, newest: str | None) -> dict[str, Any
             ),
         },
         "rto": {
-            "start": iso(incident.declared_at),
-            "start_source": incident.timestamp_sources.get("incident_declaration"),
+            "start": iso(rto_start),
+            "start_source": rto_start_source,
+            "classification": rto_classification,
             "end": iso(incident.rto_end_at),
             "end_source": incident.timestamp_sources.get("validation"),
             "definition": "validated recovered service ready for intended traffic",

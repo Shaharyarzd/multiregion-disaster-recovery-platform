@@ -149,9 +149,8 @@ def wait_for_restorable_anchor(client: Any, anchor: datetime, timeout: float = 7
         result = client.describe_continuous_backups(TableName=TABLE)
         pitr = result["ContinuousBackupsDescription"]["PointInTimeRecoveryDescription"]
         latest = pitr["LatestRestorableDateTime"].astimezone(UTC)
-        if (
-            pitr["PointInTimeRecoveryStatus"] == "ENABLED"
-            and latest >= anchor + timedelta(seconds=2)
+        if pitr["PointInTimeRecoveryStatus"] == "ENABLED" and latest >= anchor + timedelta(
+            seconds=2
         ):
             return latest
         time.sleep(backoff)
@@ -209,14 +208,14 @@ def configure_target(client: Any, target: str, run_id: str) -> dict[str, bool]:
             "table_active": table["TableStatus"] == "ACTIVE",
             "encryption_verified": table.get("SSEDescription", {}).get("KMSMasterKeyArn")
             == PRIMARY_KEY,
-            "pitr_enabled": backups["ContinuousBackupsDescription"]
-            ["PointInTimeRecoveryDescription"]["PointInTimeRecoveryStatus"]
+            "pitr_enabled": backups["ContinuousBackupsDescription"][
+                "PointInTimeRecoveryDescription"
+            ]["PointInTimeRecoveryStatus"]
             == "ENABLED",
             "tags_verified": all(actual_tags.get(key) == value for key, value in tags.items()),
             "ttl_verified": ttl.get("TimeToLiveStatus") in {"DISABLED", "DISABLING"},
             "stream_verified": table.get("StreamSpecification", {}).get("StreamEnabled") is True
-            and table.get("StreamSpecification", {}).get("StreamViewType")
-            == "NEW_AND_OLD_IMAGES",
+            and table.get("StreamSpecification", {}).get("StreamViewType") == "NEW_AND_OLD_IMAGES",
             "no_replicas": not bool(table.get("Replicas")),
             "deletion_protection": table.get("DeletionProtectionEnabled") is True,
             "billing_mode_verified": table.get("BillingModeSummary", {}).get("BillingMode")
@@ -461,8 +460,8 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
     incident.clock_skew_ms_observed = clock_skew
     incident.clock_skew_ms_limit = 1500
     incident.timestamp_sources = {
-        "incident_declaration": "RETRY_CONTROLLER_UTC_SYNCED",
-        "failure_or_corruption": "BOUNDED_BY_TRANSACTION_AND_GITHUB_JOB_LOG",
+        "incident_declaration": "CONTROLLER_UTC_SYNCED",
+        "failure_or_corruption": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
         "validation": "CONTROLLER_UTC_SYNCED",
         "recovered_transaction": "DYNAMODB_PITR_READBACK_UTC_VALIDATED",
     }
@@ -653,6 +652,13 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
         "clock": {
             "observed_skew_bound_ms": clock_skew,
             "source": "AWS_HTTP_DATE_VS_GITHUB_RUNNER_MIDPOINT",
+        },
+        "measurement_bounds": {
+            "rto_start": {
+                "timestamp": iso(failure_upper),
+                "source": "GITHUB_ACTIONS_LOG_UTC_UPPER_BOUND",
+                "classification": "LOWER_BOUND",
+            }
         },
     }
     store = LocalIncidentStore(args.work_dir)
@@ -1029,9 +1035,7 @@ def resume(args: argparse.Namespace) -> None:
     incident.reconciliation["dry_run"] = dry_run
     incident.reconciliation["duplicate_replay"] = duplicate_replay
     incident.reconciliation["stale_validation_blocked"] = stale_blocked
-    incident.reconciliation["promotion_blocked_before_repair"] = (
-        promotion_blocked_before_repair
-    )
+    incident.reconciliation["promotion_blocked_before_repair"] = promotion_blocked_before_repair
     orchestrator.promote(
         incident,
         approved=True,

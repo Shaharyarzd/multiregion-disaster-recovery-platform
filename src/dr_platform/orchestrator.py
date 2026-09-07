@@ -147,9 +147,7 @@ class RecoveryOrchestrator:
                 "recovered_checksum": comparison.recovered_checksum,
                 "missing_keys": list(comparison.missing_keys),
                 "unexpected_keys": list(comparison.unexpected_keys),
-                "newest_recovered_transaction": iso(
-                    comparison.newest_recovered_transaction
-                ),
+                "newest_recovered_transaction": iso(comparison.newest_recovered_transaction),
                 "evidence_scope": incident.evidence_scope,
             },
         )
@@ -228,8 +226,7 @@ class RecoveryOrchestrator:
                 raise ValidationFailed("Promotion blocked until bounded replay completes")
             production_repair = incident.reconciliation.get("production_repair", {})
             if incident.reconciliation.get("production_repair_required") and (
-                not isinstance(production_repair, dict)
-                or not production_repair.get("complete")
+                not isinstance(production_repair, dict) or not production_repair.get("complete")
             ):
                 raise ValidationFailed("Promotion blocked until production repair completes")
             validation_time = incident.reconciliation.get("validation_timestamp")

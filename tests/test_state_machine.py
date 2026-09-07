@@ -112,6 +112,4 @@ def test_promotion_blocks_required_incomplete_production_repair(
     incident.reconciliation["production_repair_required"] = True
     incident.reconciliation["replay_result"] = {"complete": True}
     with pytest.raises(ValidationFailed, match="production repair"):
-        orchestrator.promote(
-            incident, approved=True, approver="reviewer", reference="approval-1"
-        )
+        orchestrator.promote(incident, approved=True, approver="reviewer", reference="approval-1")

@@ -80,6 +80,7 @@ jobs:
             --region-a https://cvjvklgn0b.execute-api.us-east-1.amazonaws.com \
             --region-b https://n7hsrlcdu8.execute-api.us-west-2.amazonaws.com \
             --run-id github-34097882635 \
+            --attempt-id "github-${GITHUB_RUN_ID}" \
             --work-dir evidence/scenario-b-state \
             --output evidence/aws-runtime-scenario-b.json \
             --approver "${GITHUB_ACTOR}" \

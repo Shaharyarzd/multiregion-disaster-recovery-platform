@@ -607,6 +607,15 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
                 "failure_code": "COMBINED_DELETION_PROTECTION_AND_STREAM_UPDATE",
                 "target_created": True,
             },
+            {
+                "status": "FAIL",
+                "github_run_id": "34106115552",
+                "failed_at": "2026-09-07T09:29:05.312764Z",
+                "phase": "S3ReplicationObservation",
+                "failure_code": "S3_PENDING_REPLICA_RETURNED_403",
+                "target_created": True,
+                "checkpoint_persisted": True,
+            },
         ],
         "process_resume": {
             "checkpoint_state": incident.state.value,
@@ -700,6 +709,8 @@ def s3_proof(session: Any, run_id: str) -> dict[str, Any]:
         except Exception as error:
             if getattr(error, "response", {}).get("Error", {}).get("Code") not in {
                 "404",
+                "403",
+                "AccessDenied",
                 "NoSuchKey",
                 "NotFound",
             }:
@@ -927,7 +938,7 @@ def resume(args: argparse.Namespace) -> None:
         "initial_promotion_blocked": True,
         "automatic_overwrite_permitted": False,
     }
-    s3 = s3_proof(session, args.run_id)
+    s3 = s3_proof(session, f"{args.run_id}-{args.attempt_id}")
     orchestrator = RecoveryOrchestrator()
     orchestrator.record_validation(
         incident,
@@ -1181,8 +1192,8 @@ def main() -> None:
     elif args.phase == "retry-failed-prepare":
         retry_failed_prepare(args)
     else:
-        if not args.approver or not args.approval_reference:
-            raise ValueError("resume requires explicit approver and approval reference")
+        if not args.approver or not args.approval_reference or not args.attempt_id:
+            raise ValueError("resume requires approver, approval reference, and attempt ID")
         resume(args)
 
 

@@ -140,6 +140,7 @@ def build_report(incident: Incident, signer: EvidenceSigner | None = None) -> di
                 "record_counts": incident.record_counts,
                 "restore_configuration": incident.restore_configuration,
                 "reconciliation": incident.reconciliation,
+                "runtime_evidence": incident.runtime_evidence,
                 "validation": validation,
                 "validation_result": (
                     "PASS" if validation and validation["passed"] else "NOT_PASSED"

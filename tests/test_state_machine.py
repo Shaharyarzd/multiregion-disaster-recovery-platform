@@ -16,6 +16,7 @@ def proof() -> dict[str, bool]:
         "stream_verified": True,
         "no_replicas": True,
         "deletion_protection": True,
+        "billing_mode_verified": True,
         "ready_for_validation": True,
     }
 
@@ -89,3 +90,28 @@ def test_promotion_needs_external_approval(declared, comparison, reconciliation)
     )
     with pytest.raises(ApprovalRequired):
         orchestrator.promote(incident, approved=False, approver="owner", reference="CHG-1")
+
+
+def test_promotion_blocks_required_incomplete_production_repair(
+    declared, comparison, reconciliation
+) -> None:
+    orchestrator, incident = declared
+    orchestrator.start_recovery(incident, reconciliation.recovery_point)
+    orchestrator.begin_validation(incident, orchestrator.clock(), restore_configuration=proof())
+    orchestrator.record_validation(
+        incident,
+        comparison,
+        api_health=True,
+        read_write=True,
+        freshness=True,
+        s3_versions=True,
+        cross_region_consistency=True,
+        synthetic_transaction=True,
+        reconciliation=reconciliation,
+    )
+    incident.reconciliation["production_repair_required"] = True
+    incident.reconciliation["replay_result"] = {"complete": True}
+    with pytest.raises(ValidationFailed, match="production repair"):
+        orchestrator.promote(
+            incident, approved=True, approver="reviewer", reference="approval-1"
+        )

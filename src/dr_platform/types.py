@@ -135,3 +135,4 @@ class Incident:
     rto_end_at: datetime | None = None
     reconciliation: dict[str, Any] | None = None
     restore_configuration: dict[str, Any] | None = None
+    runtime_evidence: dict[str, Any] = field(default_factory=dict)

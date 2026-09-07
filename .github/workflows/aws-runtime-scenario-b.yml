@@ -1,0 +1,142 @@
+name: AWS runtime logical corruption and evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RUN_SYNTHETIC_SCENARIO_B
+        required: true
+        type: string
+      scenario_a_run_id:
+        description: Known-good Scenario A workflow run
+        required: true
+        default: "33644262539"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
+jobs:
+  recovery:
+    environment: aws-recovery-approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Enforce explicit synthetic-drill confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "RUN_SYNTHETIC_SCENARIO_B"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: aws-runtime-baseline-${{ inputs.scenario_a_run_id }}
+          path: scenario-a
+          run-id: ${{ inputs.scenario_a_run_id }}
+          github-token: ${{ github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install controller with AWS adapter
+        run: python -m pip install --disable-pip-version-check '.[aws]'
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Verify exact recovery identity
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "293951765338"
+          test "${AWS_REGION}" = "us-east-1"
+
+      - name: Prepare PITR target and persist non-destructive checkpoint
+        run: |
+          python scripts/aws-runtime-scenario-b.py prepare \
+            --region-a https://cvjvklgn0b.execute-api.us-east-1.amazonaws.com \
+            --region-b https://n7hsrlcdu8.execute-api.us-west-2.amazonaws.com \
+            --run-id "github-${GITHUB_RUN_ID}" \
+            --scenario-a scenario-a/aws-runtime-baseline.json \
+            --work-dir evidence/scenario-b-state \
+            --output evidence/scenario-b-prepare.json
+
+      - name: Resume from persisted checkpoint and reconcile under approval
+        run: |
+          python scripts/aws-runtime-scenario-b.py resume \
+            --region-a https://cvjvklgn0b.execute-api.us-east-1.amazonaws.com \
+            --region-b https://n7hsrlcdu8.execute-api.us-west-2.amazonaws.com \
+            --run-id "github-${GITHUB_RUN_ID}" \
+            --work-dir evidence/scenario-b-state \
+            --output evidence/aws-runtime-scenario-b.json \
+            --approver "${GITHUB_ACTOR}" \
+            --approval-reference "github-environment:${GITHUB_RUN_ID}:aws-recovery-approval"
+
+      - name: Enforce generated Scenario B pass
+        run: |
+          jq -e '.status == "PASS" and .state == "HEALTHY"' \
+            evidence/aws-runtime-scenario-b.json >/dev/null
+          jq -e '.runtime_evidence.reconciliation.promotion_eligible == true' \
+            evidence/aws-runtime-scenario-b.json >/dev/null
+
+      - name: Preserve resumable runtime state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aws-runtime-scenario-b-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  evidence:
+    needs: recovery
+    environment: aws-evidence-approval
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: aws-runtime-scenario-b-${{ github.run_id }}
+          path: evidence
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install controller with AWS adapter
+        run: python -m pip install --disable-pip-version-check '.[aws]'
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_EVIDENCE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: KMS sign and Object Lock archive exact evidence
+        run: |
+          python scripts/aws-runtime-evidence.py \
+            --work-dir evidence/scenario-b-state \
+            --output-dir evidence/final
+
+      - name: Enforce immutable archive proof
+        run: |
+          jq -e '.status == "PASS" and .kms_signature_verified_after_read_back == true' \
+            evidence/final/archive-proof.json >/dev/null
+          jq -e '.objects | to_entries | all(.value.retention_mode == "GOVERNANCE")' \
+            evidence/final/archive-proof.json >/dev/null
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aws-runtime-final-evidence-${{ github.run_id }}
+          path: evidence/final/
+          if-no-files-found: error
+          retention-days: 7

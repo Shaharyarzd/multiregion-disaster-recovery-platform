@@ -39,6 +39,12 @@ def test_report_never_manufactures_pass(declared) -> None:
     assert build_report(incident)["validation_result"] == "NOT_PASSED"
 
 
+def test_report_preserves_runtime_evidence(declared) -> None:
+    _, incident = declared
+    incident.runtime_evidence = {"routing": {"status": "PASS"}}
+    assert build_report(incident)["runtime_evidence"] == incident.runtime_evidence
+
+
 def test_redaction_is_recursive() -> None:
     result = redact({"token": "abc", "nested": [{"password": "bad"}], "safe": "ok"})
     assert result == {

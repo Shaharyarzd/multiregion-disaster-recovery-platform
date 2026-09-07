@@ -39,6 +39,7 @@ class RestoredTableProof:
     stream_verified: bool
     no_replicas: bool
     deletion_protection: bool
+    billing_mode_verified: bool
 
     @property
     def ready_for_validation(self) -> bool:
@@ -144,6 +145,10 @@ class DynamoRecoveryAdapter:
             ),
             no_replicas=not bool(refreshed.get("Replicas")),
             deletion_protection=refreshed.get("DeletionProtectionEnabled") is True,
+            billing_mode_verified=(
+                refreshed.get("BillingModeSummary", {}).get("BillingMode")
+                == "PAY_PER_REQUEST"
+            ),
         )
 
 

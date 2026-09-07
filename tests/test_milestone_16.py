@@ -137,6 +137,7 @@ def test_orchestrator_blocks_unconfigured_restore_and_stale_replay(
             "stream_verified": True,
             "no_replicas": True,
             "deletion_protection": True,
+            "billing_mode_verified": True,
             "ready_for_validation": True,
         },
     )

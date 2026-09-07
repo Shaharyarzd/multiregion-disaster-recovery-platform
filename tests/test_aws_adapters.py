@@ -65,6 +65,7 @@ class ConfiguredTableClient:
                 },
                 "Replicas": [],
                 "DeletionProtectionEnabled": True,
+                "BillingModeSummary": {"BillingMode": "PAY_PER_REQUEST"},
             }
         }
 

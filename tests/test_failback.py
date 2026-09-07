@@ -45,6 +45,7 @@ def promoted_incident(declared, comparison, reconciliation):
             "stream_verified": True,
             "no_replicas": True,
             "deletion_protection": True,
+            "billing_mode_verified": True,
             "ready_for_validation": True,
         },
     )

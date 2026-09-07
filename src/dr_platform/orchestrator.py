@@ -99,6 +99,7 @@ class RecoveryOrchestrator:
                 "stream_verified",
                 "no_replicas",
                 "deletion_protection",
+                "billing_mode_verified",
                 "ready_for_validation",
             }
             if not restore_configuration or not all(
@@ -147,9 +148,7 @@ class RecoveryOrchestrator:
                 "missing_keys": list(comparison.missing_keys),
                 "unexpected_keys": list(comparison.unexpected_keys),
                 "newest_recovered_transaction": iso(
-                    reconciliation.newest_authoritative_transaction
-                    if reconciliation
-                    else comparison.newest_recovered_transaction
+                    comparison.newest_recovered_transaction
                 ),
                 "evidence_scope": incident.evidence_scope,
             },
@@ -227,6 +226,12 @@ class RecoveryOrchestrator:
             replay_result = incident.reconciliation.get("replay_result", {})
             if not isinstance(replay_result, dict) or not replay_result.get("complete"):
                 raise ValidationFailed("Promotion blocked until bounded replay completes")
+            production_repair = incident.reconciliation.get("production_repair", {})
+            if incident.reconciliation.get("production_repair_required") and (
+                not isinstance(production_repair, dict)
+                or not production_repair.get("complete")
+            ):
+                raise ValidationFailed("Promotion blocked until production repair completes")
             validation_time = incident.reconciliation.get("validation_timestamp")
             if validation_time != iso(incident.validation_completed_at):
                 raise ValidationFailed("Promotion blocked because validation evidence is stale")

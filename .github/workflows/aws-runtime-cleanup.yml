@@ -142,7 +142,7 @@ jobs:
       - name: Destroy Region A runtime
         run: |
           if terraform -chdir=terraform/stacks/region-a state list | grep -qx 'module.service.aws_iam_role.lambda'; then
-            role_id="$(terraform -chdir=terraform/stacks/region-a state show -no-color module.service.aws_iam_role.lambda | awk '$1 == "id" {print $3}')"
+            role_id="$(terraform -chdir=terraform/stacks/region-a state pull | jq -r '.resources[] | select(.module == "module.service" and .type == "aws_iam_role" and .name == "lambda") | .instances[0].attributes.id')"
             test "$role_id" = "portfolio-dr-us-east-1-app"
             terraform -chdir=terraform/stacks/region-a state rm module.service.aws_iam_role.lambda
           fi
@@ -161,7 +161,7 @@ jobs:
       - name: Destroy Region B runtime
         run: |
           if terraform -chdir=terraform/stacks/region-b state list | grep -qx 'module.service.aws_iam_role.lambda'; then
-            role_id="$(terraform -chdir=terraform/stacks/region-b state show -no-color module.service.aws_iam_role.lambda | awk '$1 == "id" {print $3}')"
+            role_id="$(terraform -chdir=terraform/stacks/region-b state pull | jq -r '.resources[] | select(.module == "module.service" and .type == "aws_iam_role" and .name == "lambda") | .instances[0].attributes.id')"
             test "$role_id" = "portfolio-dr-us-west-2-app"
             terraform -chdir=terraform/stacks/region-b state rm module.service.aws_iam_role.lambda
           fi
@@ -275,7 +275,7 @@ jobs:
             --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg retained "$retained" \
             --arg resumed_from "${{ inputs.resume_cleanup_run_id }}" \
-            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,resumed_from_cleanup_run:($resumed_from | if . == "" then null else . end),preserved_failed_attempts:[{run_id:"34110697442",phase:"RegionARuntimeTeardown",failure_code:"TERRAFORM_PROVIDER_LIST_INSTANCE_PROFILES_PERMISSION",partial_cleanup:true}],disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_kms_dependencies:["primary-data-encryption","evidence-signing"],secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
+            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,resumed_from_cleanup_run:($resumed_from | if . == "" then null else . end),preserved_failed_attempts:[{run_id:"34110697442",phase:"RegionARuntimeTeardown",failure_code:"TERRAFORM_PROVIDER_LIST_INSTANCE_PROFILES_PERMISSION",partial_cleanup:true},{run_id:"34131653420",phase:"RegionARuntimeTeardown",failure_code:"EXACT_ROLE_ID_HCL_QUOTING_GUARD",partial_cleanup:false}],disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_kms_dependencies:["primary-data-encryption","evidence-signing"],secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
 
       - name: Preserve cleanup state and proof
         if: always()

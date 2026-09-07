@@ -573,6 +573,14 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
                 "failure_code": "MISSING_DYNAMODB_BATCH_WRITE_ITEM_ON_ISOLATED_TARGET",
                 "target_created": False,
             },
+            {
+                "status": "FAIL",
+                "github_run_id": "34103322373",
+                "failed_at": "2026-09-07T08:57:56.071447Z",
+                "phase": "RestoreTableToPointInTime",
+                "failure_code": "MISSING_KMS_DESCRIBE_KEY_ON_PRIMARY_DATA_KEY",
+                "target_created": False,
+            },
         ],
         "process_resume": {
             "checkpoint_state": incident.state.value,

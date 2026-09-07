@@ -173,17 +173,18 @@ def wait_table(client: Any, name: str, timeout: float = 1800) -> dict[str, Any]:
 
 def configure_target(client: Any, target: str, run_id: str) -> dict[str, bool]:
     table = wait_table(client, target)
-    update: dict[str, Any] = {"TableName": target}
     if table.get("DeletionProtectionEnabled") is not True:
-        update["DeletionProtectionEnabled"] = True
+        client.update_table(TableName=target, DeletionProtectionEnabled=True)
+        table = wait_table(client, target)
     stream = table.get("StreamSpecification", {})
     if not stream.get("StreamEnabled") or stream.get("StreamViewType") != "NEW_AND_OLD_IMAGES":
-        update["StreamSpecification"] = {
-            "StreamEnabled": True,
-            "StreamViewType": "NEW_AND_OLD_IMAGES",
-        }
-    if len(update) > 1:
-        client.update_table(**update)
+        client.update_table(
+            TableName=target,
+            StreamSpecification={
+                "StreamEnabled": True,
+                "StreamViewType": "NEW_AND_OLD_IMAGES",
+            },
+        )
         table = wait_table(client, target)
     client.update_continuous_backups(
         TableName=target,
@@ -467,34 +468,40 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
     }
     orchestrator.start_recovery(incident, recovery_point)
     target = recovery_target_name(TABLE, args.failed_run_id)
-    restore_started = utc_now()
-
     concurrent: list[Transaction] = []
-    stop = threading.Event()
-    writer = threading.Thread(
-        target=writer_loop,
-        args=(endpoints, args.attempt_id, concurrent, stop),
-        daemon=True,
-    )
-    writer.start()
     try:
-        DynamoRecoveryAdapter(PRIMARY_REGION).restore_to_isolated_table(
-            f"arn:aws:dynamodb:{PRIMARY_REGION}:{ACCOUNT}:table/{TABLE}",
-            target,
-            recovery_point,
-            kms_key_arn=PRIMARY_KEY,
+        existing_target = dynamo.describe_table(TableName=target)["Table"]
+    except dynamo.exceptions.ResourceNotFoundException:
+        existing_target = None
+    resumed_existing_target = existing_target is not None
+    if existing_target is None:
+        restore_started = utc_now()
+        stop = threading.Event()
+        writer = threading.Thread(
+            target=writer_loop,
+            args=(endpoints, args.attempt_id, concurrent, stop),
+            daemon=True,
         )
-        wait_table(dynamo, target)
-        proof = configure_target(dynamo, target, args.failed_run_id)
-        restore_ready = utc_now()
-        deadline = time.monotonic() + 30
-        while len(concurrent) < 4 and time.monotonic() < deadline:
-            time.sleep(0.25)
-    finally:
-        stop.set()
-        writer.join(timeout=20)
-    if len(concurrent) < 2:
-        raise RuntimeError("controlled concurrent retry writers did not remain active")
+        writer.start()
+        try:
+            DynamoRecoveryAdapter(PRIMARY_REGION).restore_to_isolated_table(
+                f"arn:aws:dynamodb:{PRIMARY_REGION}:{ACCOUNT}:table/{TABLE}",
+                target,
+                recovery_point,
+                kms_key_arn=PRIMARY_KEY,
+            )
+            wait_table(dynamo, target)
+            restore_ready = utc_now()
+        finally:
+            stop.set()
+            writer.join(timeout=20)
+    else:
+        if existing_target.get("TableStatus") != "ACTIVE":
+            raise RuntimeError("preserved PITR target is not ACTIVE")
+        restore_started = existing_target["CreationDateTime"].astimezone(UTC)
+        restore_ready = parse_time("2026-09-07T09:24:02.799355Z")
+    proof = configure_target(dynamo, target, args.failed_run_id)
+    configuration_ready = utc_now()
 
     restored = scan(dynamo, target)
     restored_map = {item.transaction_id: item for item in restored}
@@ -512,6 +519,9 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
         raise RuntimeError("PITR target contains a transaction newer than the selected point")
 
     live_after = scan(dynamo, TABLE)
+    concurrent = [item for item in live_after if item.timestamp > recovery_point]
+    if len(concurrent) < 2 or len(concurrent) > 25:
+        raise RuntimeError("observed post-point writes are outside the bounded replay batch")
     live_map = {item.transaction_id: item for item in live_after}
     missing = [item for item in restored if item.transaction_id not in live_map]
     modified = [
@@ -527,7 +537,7 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
     if live_map[corrupted.transaction_id].payload != corrupt_payload:
         raise RuntimeError("modified item does not carry the exact failed-run corruption marker")
 
-    orchestrator.begin_validation(incident, restore_ready, restore_configuration=proof)
+    orchestrator.begin_validation(incident, configuration_ready, restore_configuration=proof)
     incident.runtime_evidence = {
         "scenario_a": scenario_a,
         "failed_attempt": {
@@ -589,6 +599,14 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
                 "failure_code": "MISSING_KMS_CREATE_GRANT_ON_PRIMARY_DATA_KEY",
                 "target_created": False,
             },
+            {
+                "status": "FAIL",
+                "github_run_id": "34104305723",
+                "failed_at": "2026-09-07T09:24:02.803528Z",
+                "phase": "ConfigureIsolatedRecoveryTarget",
+                "failure_code": "COMBINED_DELETION_PROTECTION_AND_STREAM_UPDATE",
+                "target_created": True,
+            },
         ],
         "process_resume": {
             "checkpoint_state": incident.state.value,
@@ -604,6 +622,8 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
             "restore_started": iso(restore_started),
             "restore_ready": iso(restore_ready),
             "restore_duration_seconds": (restore_ready - restore_started).total_seconds(),
+            "configuration_ready": iso(configuration_ready),
+            "resumed_existing_target": resumed_existing_target,
             "configuration": proof,
         },
         "fault": {
@@ -620,6 +640,7 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
             "full_pre_fault_manifest_missing_due_to_preserved_failed_attempt": True,
         },
         "concurrent_writes": transaction_dicts(concurrent),
+        "concurrent_write_proof": "OBSERVED_POST_POINT_WRITES_DURING_PRIOR_RESTORE_ATTEMPTS",
         "clock": {
             "observed_skew_bound_ms": clock_skew,
             "source": "AWS_HTTP_DATE_VS_GITHUB_RUNNER_MIDPOINT",

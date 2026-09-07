@@ -49,6 +49,16 @@ def test_deploy_mutation_exists_only_in_guarded_replica_bootstrap() -> None:
     assert "role/${var.resource_prefix}-s3-replication" in role_management
 
 
+def test_temporary_replica_delete_is_exact_and_independently_gated() -> None:
+    assert "var.temporary_delete_table_replica ? [1] : []" in DEPLOY
+    statement = DEPLOY.split('sid       = "TemporaryCleanupExactSecondaryReplica"', 1)[1].split(
+        "\n    }", 1
+    )[0]
+    assert 'actions   = ["dynamodb:DeleteTableReplica"]' in statement
+    assert "${var.secondary_region}" in statement
+    assert ":table/${var.resource_prefix}-transactions" in statement
+
+
 def test_resume_repairs_only_verified_tainted_resources_and_blocks_destroy() -> None:
     assert DEPLOY_WORKFLOW.count("terraform untaint") == 5
     assert "terraform untaint module.data.aws_dynamodb_table.transactions" in DEPLOY_WORKFLOW

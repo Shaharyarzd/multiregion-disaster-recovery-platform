@@ -347,6 +347,14 @@ data "aws_iam_policy_document" "deploy" {
       resources = ["arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions"]
     }
   }
+  dynamic "statement" {
+    for_each = var.temporary_delete_table_replica ? [1] : []
+    content {
+      sid       = "TemporaryCleanupExactSecondaryReplica"
+      actions   = ["dynamodb:DeleteTableReplica"]
+      resources = ["arn:${data.aws_partition.current.partition}:dynamodb:${var.secondary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-transactions"]
+    }
+  }
   statement {
     sid = "ManageProjectS3Buckets"
     actions = [

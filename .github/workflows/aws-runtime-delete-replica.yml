@@ -1,0 +1,55 @@
+name: Controlled AWS delete exact replica
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DELETE_EXACT_SECONDARY_REPLICA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
+jobs:
+  delete-exact-replica:
+    environment: aws-deployment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce exact confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "DELETE_EXACT_SECONDARY_REPLICA"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Verify and remove exact secondary replica
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "293951765338"
+          table=portfolio-dr-transactions
+          source_arn="arn:aws:dynamodb:us-east-1:293951765338:table/${table}"
+          target_arn="arn:aws:dynamodb:us-west-2:293951765338:table/${table}"
+          test "$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'Table.TableArn' --output text)" = "$source_arn"
+          test "$(aws dynamodb describe-table --region us-west-2 --table-name "$table" --query 'Table.TableArn' --output text)" = "$target_arn"
+          tags="$(aws dynamodb list-tags-of-resource --region us-east-1 --resource-arn "$source_arn" --output json)"
+          test "$(jq -r '.Tags[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
+          test "$(jq -r '.Tags[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
+          # shellcheck disable=SC2016
+          test "$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(Table.Replicas[?RegionName == `us-west-2` && ReplicaStatus == `ACTIVE`])' --output text)" = "1"
+          aws dynamodb update-table --region us-east-1 --table-name "$table" --replica-updates Delete='{RegionName=us-west-2}' >/dev/null
+          for attempt in {1..180}; do
+            # shellcheck disable=SC2016
+            replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(Table.Replicas[?RegionName == `us-west-2`])' --output text)"
+            if [ "$replicas" = "0" ]; then break; fi
+            test "$attempt" -lt 180
+            sleep 5
+          done
+          if aws dynamodb describe-table --region us-west-2 --table-name "$table" >/dev/null 2>&1; then exit 1; fi

@@ -37,3 +37,8 @@ variable "temporary_replica_update_item" {
   default     = false
   description = "Temporary secondary-replica creation exception; remove before synthetic writes."
 }
+variable "temporary_delete_table_replica" {
+  type        = bool
+  default     = false
+  description = "Temporary cleanup-only exception for the exact secondary transactions-table replica."
+}

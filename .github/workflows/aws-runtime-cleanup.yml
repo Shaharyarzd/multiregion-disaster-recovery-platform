@@ -178,9 +178,19 @@ jobs:
           fi
 
       - name: Remove replication and empty exact disposable buckets
+        env:
+          RESUME_CLEANUP_RUN_ID: ${{ inputs.resume_cleanup_run_id }}
         run: |
-          aws s3api delete-bucket-replication --bucket portfolio-dr-293951765338-us-east-1
+          if aws s3api head-bucket --bucket portfolio-dr-293951765338-us-east-1 2>/dev/null; then
+            aws s3api delete-bucket-replication --bucket portfolio-dr-293951765338-us-east-1
+          else
+            test -n "$RESUME_CLEANUP_RUN_ID"
+          fi
           for bucket in portfolio-dr-293951765338-us-east-1 portfolio-dr-293951765338-us-west-2; do
+            if ! aws s3api head-bucket --bucket "$bucket" 2>/dev/null; then
+              test -n "$RESUME_CLEANUP_RUN_ID"
+              continue
+            fi
             tags="$(aws s3api get-bucket-tagging --bucket "$bucket" --output json)"
             test "$(jq -r '.TagSet[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
             test "$(jq -r '.TagSet[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
@@ -196,21 +206,20 @@ jobs:
           done
 
       - name: Remove exact Global Table and secondary data-key dependencies
+        env:
+          RESUME_CLEANUP_RUN_ID: ${{ inputs.resume_cleanup_run_id }}
         run: |
-          aws dynamodb update-table --region us-west-2 --table-name portfolio-dr-transactions --no-deletion-protection-enabled >/dev/null
-          for attempt in {1..90}; do
-            status="$(aws dynamodb describe-table --region us-west-2 --table-name portfolio-dr-transactions --query 'Table.TableStatus' --output text)"
-            if [ "$status" = "ACTIVE" ]; then break; fi
-            test "$attempt" -lt 90
-            sleep 5
-          done
-          aws dynamodb update-table --region us-east-1 --table-name portfolio-dr-transactions --replica-updates Delete='{RegionName=us-west-2}' >/dev/null
-          for attempt in {1..180}; do
-            replicas="$(aws dynamodb describe-table --region us-east-1 --table-name portfolio-dr-transactions --query 'length(Table.Replicas)' --output text)"
-            if [ "$replicas" = "0" ]; then break; fi
-            test "$attempt" -lt 180
-            sleep 5
-          done
+          table=portfolio-dr-transactions
+          source_arn="arn:aws:dynamodb:us-east-1:293951765338:table/${table}"
+          test "$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'Table.TableArn' --output text)" = "$source_arn"
+          tags="$(aws dynamodb list-tags-of-resource --region us-east-1 --resource-arn "$source_arn" --output json)"
+          test "$(jq -r '.Tags[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
+          test "$(jq -r '.Tags[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
+          replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(Table.Replicas)' --output text)"
+          if [ "$replicas" != "0" ]; then
+            exit 1
+          fi
+          test -n "$RESUME_CLEANUP_RUN_ID"
           aws dynamodb update-table --region us-east-1 --table-name portfolio-dr-transactions --no-deletion-protection-enabled >/dev/null
           for attempt in {1..90}; do
             status="$(aws dynamodb describe-table --region us-east-1 --table-name portfolio-dr-transactions --query 'Table.TableStatus' --output text)"
@@ -220,12 +229,16 @@ jobs:
           done
           aws dynamodb delete-table --region us-east-1 --table-name portfolio-dr-transactions >/dev/null
           aws dynamodb wait table-not-exists --region us-east-1 --table-name portfolio-dr-transactions
-          policies="$(aws iam list-role-policies --role-name portfolio-dr-s3-replication --query PolicyNames --output json)"
-          test "$(jq 'length' <<<"$policies")" = "1"
-          policy="$(jq -r '.[0] | select(startswith("terraform-"))' <<<"$policies")"
-          test -n "$policy"
-          aws iam delete-role-policy --role-name portfolio-dr-s3-replication --policy-name "$policy"
-          aws iam delete-role --role-name portfolio-dr-s3-replication
+          if aws iam get-role --role-name portfolio-dr-s3-replication >/dev/null 2>&1; then
+            policies="$(aws iam list-role-policies --role-name portfolio-dr-s3-replication --query PolicyNames --output json)"
+            test "$(jq 'length' <<<"$policies")" = "1"
+            policy="$(jq -r '.[0] | select(startswith("terraform-"))' <<<"$policies")"
+            test -n "$policy"
+            aws iam delete-role-policy --role-name portfolio-dr-s3-replication --policy-name "$policy"
+            aws iam delete-role --role-name portfolio-dr-s3-replication
+          else
+            test -n "$RESUME_CLEANUP_RUN_ID"
+          fi
           aws kms delete-alias --region us-west-2 --alias-name alias/portfolio-dr-secondary
           aws kms schedule-key-deletion --region us-west-2 --key-id 032b1964-e252-4e69-bcc5-c69e9f944c10 --pending-window-in-days 30 >/dev/null
 

@@ -49,4 +49,9 @@ variable "temporary_replica_update_item" {
   default     = false
   description = "One-run Global Table bootstrap exception; must be false before baseline data."
 }
+variable "temporary_delete_table_replica" {
+  type        = bool
+  default     = false
+  description = "Cleanup-only permission to remove the exact secondary transactions-table replica; disable immediately afterward."
+}
 variable "tags" { type = map(string) }

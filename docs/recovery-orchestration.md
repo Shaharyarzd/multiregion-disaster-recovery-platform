@@ -5,15 +5,22 @@
 ```mermaid
 stateDiagram-v2
   [*] --> HEALTHY
-  HEALTHY --> INCIDENT_DECLARED: operator declares
-  INCIDENT_DECLARED --> RECOVERY_IN_PROGRESS: isolated restore starts
-  RECOVERY_IN_PROGRESS --> VALIDATING: infrastructure ready
-  VALIDATING --> RECOVERY_IN_PROGRESS: validation failed / retry
+  HEALTHY --> INCIDENT_DECLARED: declare + timestamp
+  INCIDENT_DECLARED --> RECOVERY_IN_PROGRESS: start isolated recovery
+  RECOVERY_IN_PROGRESS --> VALIDATING: restore/configuration ready
+  VALIDATING --> RECOVERY_IN_PROGRESS: validation failed; retry safely
   VALIDATING --> AWAITING_APPROVAL: every gate passed
-  AWAITING_APPROVAL --> RECOVERY_ACTIVE: protected promotion approval
-  RECOVERY_ACTIVE --> FAILBACK_IN_PROGRESS: health + consistency + approval
-  FAILBACK_IN_PROGRESS --> RECOVERY_ACTIVE: failback validation fails
+  AWAITING_APPROVAL --> RECOVERY_ACTIVE: separate promotion approval
+  RECOVERY_ACTIVE --> FAILBACK_IN_PROGRESS: fresh consistency + approval
+  FAILBACK_IN_PROGRESS --> RECOVERY_ACTIVE: failback proof failed/stale
   FAILBACK_IN_PROGRESS --> HEALTHY: both regions validated + approval
+
+  note right of AWAITING_APPROVAL
+    No implicit promotion
+    No unresolved conflict
+    Replay complete
+    Validation fresh
+  end note
 ```
 
 The library rejects every absent edge. `AWAITING_APPROVAL` is reachable only when all fields of
@@ -39,4 +46,3 @@ Every recovery requires API health, read/write, exact record count, exact expect
 deterministic content checksum, freshness, S3 expected versions, cross-region consistency, and a
 new synthetic transaction after recovery. A check may be relaxed only by changing code and review,
 never by editing the JSON evidence.
-

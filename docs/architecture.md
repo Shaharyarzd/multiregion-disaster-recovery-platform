@@ -10,32 +10,37 @@ During logical corruption, both replicas may contain the bad write, so traffic f
 insufficient—PITR restoration occurs into an isolated table.
 
 ```mermaid
-flowchart TB
-  subgraph Edge[Routing boundary]
-    Client[Clients / drill traffic] --> Health[Independent health probes]
-    Health --> Route{Healthy endpoint set}
+flowchart LR
+  subgraph Traffic[Traffic boundary]
+    Client[Client traffic] --> Router{Healthy endpoint set}
   end
-  subgraph A[Region A - active]
-    APIA[HTTP API A] --> LambdaA[Transaction Lambda A]
+
+  subgraph A[Region A — active]
+    APIA[HTTP API] --> LambdaA[Transaction Lambda]
     LambdaA --> DDBA[(Global Table replica A)]
-    S3A[(Versioned S3 A / KMS A)]
-    CWA[CloudWatch A]
+    S3A[(Versioned S3 + KMS A)]
   end
-  subgraph B[Region B - active]
-    APIB[HTTP API B] --> LambdaB[Transaction Lambda B]
+
+  subgraph B[Region B — active]
+    APIB[HTTP API] --> LambdaB[Transaction Lambda]
     LambdaB --> DDBB[(Global Table replica B)]
-    S3B[(Versioned S3 B / KMS B)]
-    CWB[CloudWatch B]
+    S3B[(Versioned S3 + KMS B)]
   end
-  Route --> APIA
-  Route --> APIB
-  DDBA <--> |Global Table replication| DDBB
-  S3A --> |encrypted CRR| S3B
-  Controller[drctl / protected recovery role] --> APIA
-  Controller --> APIB
-  Controller --> Restore[(Isolated PITR table)]
-  Controller --> Evidence[JSON evidence + DR metrics]
-  Approval[Human approval gate] -.-> Controller
+
+  Router --> APIA
+  Router --> APIB
+  DDBA <-->|active-active replication| DDBB
+  S3A -->|encrypted CRR| S3B
+
+  subgraph Recovery[Protected recovery control plane]
+    Controller[drctl] --> Restore[(Isolated PITR table)]
+    Restore --> Validate{Validation gates}
+    Validate -->|pass| Approval[Human approval]
+    Approval --> Reconcile[Bounded reconciliation]
+    Controller --> Evidence[CloudWatch + signed report]
+  end
+
+  Reconcile -.->|conditional writes| DDBA
 ```
 
 ## Failure semantics
@@ -55,8 +60,9 @@ flowchart TB
 The executable demo uses `SyntheticRouter`, a deterministic client-side endpoint selector that
 removes failed endpoints. It proves application behavior and routing assertions in a reproducible,
 low-cost test. It does **not** prove DNS propagation, anycast convergence, resolver caching, or
-internet-path health. Production would use Route 53 health/evaluate-target routing plus ARC safety
-rules, or Global Accelerator, WAF, custom domains, and multi-vantage probes.
+internet-path health. The production target is Route 53 health-aware routing with custom regional
+API domains, safety controls, and multi-vantage probes. Global Accelerator would require a
+compatible endpoint layer rather than targeting API Gateway directly and was not part of this run.
 
 ## State ownership
 
@@ -69,4 +75,3 @@ rules, or Global Accelerator, WAF, custom domains, and multi-vantage probes.
 
 Regional roots receive global outputs as explicit pipeline inputs. This permits independent plan
 and recreation without granting every stack write access to shared state.
-

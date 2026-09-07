@@ -4,48 +4,60 @@
 
 ```mermaid
 sequenceDiagram
-  participant V as Validation client
-  participant A as Region A
-  participant B as Region B
+  participant C as Health-aware client
+  participant A as Region A API
+  participant B as Region B API
   participant D as drctl
-  participant E as Evidence
-  V->>A: health/read/write probe
-  A--xV: unavailable
-  V->>B: health/read/write probe
-  B-->>V: healthy
-  D->>D: declare incident + timestamp
-  D->>A: quarantine from synthetic route set
-  D->>B: create deterministic transaction
-  B-->>D: read-back succeeds
-  D->>D: assert one writable survivor, no duplicate route target
-  D->>E: measured RTO + routing/transaction evidence
+  participant E as Evidence chain
+
+  C->>A: health/read/write probe
+  A--xC: endpoint unavailable
+  C->>B: concurrent health/read/write probe
+  B-->>C: healthy
+  D->>D: declare incident (RTO start)
+  D->>D: threshold reached; quarantine A
+  D->>B: deterministic survivor write
+  B-->>D: read-back validated (RTO end)
+  D->>E: RTO + request outcomes
+  D->>A: probe restored endpoint
+  A-->>D: healthy
+  D->>D: consistency + approval gate
+  D->>E: active-active restored
 ```
 
-Inject the failure only through the test harness in Milestone 1. In AWS, an owner-authorized drill
-may disable the validation client’s Region A endpoint or use a scoped fault mechanism; it must not
-destroy data. Success means the Region B read/write path is observed, the failed endpoint is
-excluded, and the RTO clock stops at the first successful survivor transaction—not when an alarm
-changes state.
+The AWS drill made Region A unavailable to the validation client without destroying regional data.
+Region B read/write remained available, the failed endpoint was excluded, and the RTO clock stopped
+at the first successful validated survivor transaction—not when an alarm changed state. This
+measured application recovery, not managed DNS or anycast convergence.
 
 ## Scenario 2: logical DynamoDB corruption
 
 ```mermaid
-flowchart LR
-  Bad[Delete/corrupt synthetic records] --> Detect[Detect and timestamp corruption]
-  Detect --> Point[Select latest safe point]
-  Point --> PITR[Restore to isolated table]
-  PITR --> Validate{Count + keys + checksum + freshness + API + S3 + write}
-  Validate -->|fail| Isolate[Keep isolated / choose earlier point]
-  Validate -->|pass| Gate[Await protected approval]
-  Gate -->|approved| Reconcile[Controlled reconcile or switch]
-  Reconcile --> Observe[Post-promotion observation]
-  Observe --> Failback[Validate original path + approve failback]
+flowchart TD
+  Bad[Corrupt/delete synthetic records] --> Detect[Record bounded corruption time]
+  Detect --> Point[Select latest safe PITR point]
+  Point --> Restore[(Restore isolated table)]
+  Restore --> Configure[Restore encryption, PITR, TTL,<br/>streams, tags and protection]
+  Configure --> Compare{Count + key set + checksum<br/>freshness + configuration}
+
+  Compare -->|fail| Stop[Remain isolated; stop or retry]
+  Compare -->|pass| Plan[Deterministic replay plan]
+  Plan --> Safety{Conflict, unsafe newer write,<br/>stale proof or excessive lag?}
+  Safety -->|yes| Stop
+  Safety -->|no| Gate[Protected approval]
+  Gate --> Replay[Bounded idempotent replay<br/>and conditional repair]
+  Replay --> Promote{Post-replay validation passes?}
+  Promote -->|no| Stop
+  Promote -->|yes| Active[Recovery eligible for traffic]
+  Active --> Failback[Fresh consistency proof<br/>+ approval + failback]
 ```
 
 The restored table is never named or wired as production during restore. “Amount lost” is the
-missing expected key count; RPO is the corruption timestamp minus newest recovered transaction.
-Unexpected keys also fail validation. Production reconciliation strategy—table switch, selective
-copy, or immutable replay—must be chosen from the incident’s corruption scope.
+missing expected key count. RPO is a conservative interval between the bounded corruption
+observation and newest validated PITR transaction; application timestamps do not establish causal
+order under Global Table LWW semantics. Unexpected keys also fail validation. Production
+reconciliation strategy—table switch, selective copy, or immutable replay—must be chosen from the
+incident’s corruption scope.
 
 ## Scenario 3: S3 deletion/stale replica/version recovery
 
@@ -60,4 +72,3 @@ replication status and destination version, then delete the current source versi
 
 A missing/stale replica does not automatically fail DynamoDB recovery, but it fails the composite
 application recovery gate when that object belongs to the expected manifest.
-

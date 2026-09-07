@@ -1,137 +1,190 @@
 # Multi-Region Disaster Recovery & Recovery Validation Platform
 
-[![CI](https://github.com/OWNER/multiregion-disaster-recovery-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/multiregion-disaster-recovery-platform/actions/workflows/ci.yml)
+[![CI](https://github.com/Shaharyarzd/multiregion-disaster-recovery-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Shaharyarzd/multiregion-disaster-recovery-platform/actions/workflows/ci.yml)
 
-A synthetic, serverless portfolio reference for operating an **active-active AWS application**
-across two regions and recovering safely from two materially different failures:
+A serverless AWS case study that asks a harder question than “did failover work?”:
 
-1. a regional service outage while the surviving region continues reads and writes; and
-2. logical data corruption requiring DynamoDB PITR into an isolated target, validation,
-   explicit approval, and controlled reconciliation.
+> Can an active-active application survive a regional endpoint outage, recover safely from logical
+> corruption, prove data correctness before promotion, and measure actual RTO/RPO from trusted
+> observations?
 
-It also validates versioned, KMS-encrypted S3 supporting objects and cross-region replicas.
-The core claim is narrow: recovery is complete only after observed service and data correctness
-checks pass. `drctl` calculates RTO/RPO from event timestamps; it never turns a Terraform success
-into recovery evidence.
+The implementation uses two regional HTTP APIs and Lambdas, DynamoDB Global Tables with PITR,
+versioned S3 with encrypted cross-region replication, KMS, CloudWatch, Terraform, GitHub OIDC, and
+a Python recovery controller named `drctl`. All application data is synthetic.
 
-> **Milestone 1 status:** architecture and locally testable implementation only. No AWS resources
-> have been created and the checked-in evidence is explicitly local/synthetic—not an AWS PASS.
+## Runtime proof
 
-## What is engineered here
+Milestone 2 executed the disposable two-region topology in `us-east-1` and `us-west-2`. The final
+report was hash-chained, signed with an asymmetric AWS KMS key, verified after exact-version
+read-back, and retained under S3 Object Lock.
 
-- Active-active Lambda + HTTP API services in `us-east-1` and `us-west-2` (configurable), backed
-  by a DynamoDB Global Table with PITR.
-- S3 versioning, SSE-KMS, block-public-access, and encrypted cross-region replication with delete
-  markers intentionally not replicated.
-- Deterministic synthetic transactions and a deterministic local traffic router for outage drills.
-  Production uses Route 53 ARC/health-aware DNS or Global Accelerator; the demo does not claim
-  equivalence to global DNS/anycast.
-- `drctl` recovery control plane with explicit state transitions, isolated restore, deterministic
-  checksums/key comparison, freshness and object-version gates, approval evidence, and safe failback.
-- Machine-readable `recovery-report.json` with calculated RTO/RPO, record loss, validations,
-  approvals, and failback state.
-- Independent Terraform ownership for bootstrap, global data, and each regional runtime.
-- GitHub Actions OIDC, separate deploy/recovery roles, tests, type/lint checks, Terraform validation,
-  workflow lint, IaC scanning, and secret scanning. Cloud plans are manual; apply is absent.
+| Proof | Observed result |
+|---|---|
+| Regional endpoint outage | **PASS** — survivor read/write continued; safe active-active return |
+| Measured routing/service RTO | **0.897355 seconds** |
+| DynamoDB cross-region convergence | **837.783 ms** and **1394.320 ms** |
+| Logical-corruption recovery | **PASS** — isolated PITR restore and configuration validation |
+| PITR restore duration | **901.812355 seconds** |
+| Restored data | **8/8 records**, zero missing or unexpected |
+| Reconciliation | **21 replayed**, duplicate retry **21/21 idempotent**, two conditional repairs |
+| Safety gates | conflicts, incomplete replay, stale validation, and unsafe promotion fail closed |
+| S3 CRR and version recovery | **PASS** — observed lag **23.813 seconds**, exact digest/version |
+| Controller crash/resume | **PASS** — durable state recovered without duplicate promotion/replay |
+| CloudWatch contract | **PASS** — all nine DR metrics accepted and observed |
+| Evidence integrity | **PASS** — SHA-256 chain, KMS signature, Object Lock, read-back verification |
+| Cleanup | **PASS** — no unexpected billable runtime remains |
 
-## Architecture at a glance
+> Measured RPO was conservatively bounded at **323.244–323.957 seconds**. Because DynamoDB Global
+> Tables use last-writer-wins semantics, application timestamps were not treated as causal ordering
+> evidence; the bound was derived from PITR readback and trusted AWS/controller observations.
+
+Failed attempts and narrow IAM/runtime corrections remain in the signed audit trail. They were not
+removed to manufacture a clean PASS. See [runtime evidence](docs/runtime-evidence.md).
+
+## Architecture
 
 ```mermaid
 flowchart LR
-  Client[Validation client / production global router] --> Router{Health-aware routing}
-  Router --> APIA[Region A HTTP API]
-  Router --> APIB[Region B HTTP API]
-  APIA --> LA[Lambda A]
-  APIB --> LB[Lambda B]
-  LA --> GT[(DynamoDB Global Table)]
-  LB --> GT
-  GT <--> RA[(Replica A)]
-  GT <--> RB[(Replica B)]
-  S3A[(S3 A: versions + KMS)] -->|CRR| S3B[(S3 B: versions + KMS)]
-  DR[drctl recovery controller] --> APIA
-  DR --> APIB
-  DR --> ISO[(Isolated PITR target)]
-  DR --> EV[Evidence report + CloudWatch metrics]
-  Approver[Protected human approval] -. promote / failback .-> DR
+  Client[Validation client] --> Router{Health-aware<br/>demo router}
+
+  subgraph A[Region A — active]
+    APIA[HTTP API] --> LA[Lambda]
+    LA --> DDBA[(DynamoDB replica A)]
+    S3A[(Versioned S3 + KMS)]
+  end
+
+  subgraph B[Region B — active]
+    APIB[HTTP API] --> LB[Lambda]
+    LB --> DDBB[(DynamoDB replica B)]
+    S3B[(Versioned S3 + KMS)]
+  end
+
+  Router --> APIA
+  Router --> APIB
+  DDBA <-->|Global Table| DDBB
+  S3A -->|encrypted CRR| S3B
+
+  DR[drctl recovery controller] --> Restore[(Isolated PITR target)]
+  Restore --> Validate{Correct and fresh?}
+  Validate -->|yes| Approval[Protected approval]
+  Approval --> Reconcile[Bounded reconciliation]
+  DR --> Evidence[CloudWatch + signed evidence]
 ```
 
-Detailed and scenario-specific diagrams live in [architecture](docs/architecture.md),
-[disaster scenarios](docs/disaster-scenarios.md), and
-[recovery orchestration](docs/recovery-orchestration.md).
+The executed router is deliberately synthetic: it proves health-aware application behavior, not
+DNS or anycast convergence. Route 53 with health-aware records/custom domains is the documented
+production target. No paid global-routing service was used.
 
-## Recovery contract
+## Two distinct recovery problems
 
-`HEALTHY → INCIDENT_DECLARED → RECOVERY_IN_PROGRESS → VALIDATING → AWAITING_APPROVAL
-→ RECOVERY_ACTIVE → FAILBACK_IN_PROGRESS → HEALTHY`
+### Regional outage
 
-Automation discovers resources, selects/restores data, probes both APIs, compares data and S3
-versions, writes a post-recovery transaction, calculates observed metrics, and generates evidence.
-Humans must approve promotion, entering failback, and returning to active-active service. Invalid
-or skipped transitions fail closed.
+Both regions normally accept traffic. The drill quarantines an unavailable endpoint after a fixed
+failure threshold, proves a deterministic write/read through the survivor, measures recovery at
+the first validated service-ready observation, then requires fresh health and consistency evidence
+before restoring active-active routing.
+
+### Logical corruption
+
+Global replication can copy corruption to every replica, so regional failover is insufficient.
+The controller follows:
+
+`detect → choose recovery point → isolated PITR restore → configure → validate → compare → approve
+→ bounded replay/repair → promote → validate → fail back`
+
+The restored table never replaces production merely because AWS reports it `ACTIVE`. Promotion is
+blocked by checksum/key-set/count failures, unresolved conflicts, incomplete replay, stale evidence,
+unsafe newer writes, excessive replication lag, or failed restored-resource configuration checks.
+
+## Recovery control plane
+
+`drctl` implements an explicit state machine:
+
+`HEALTHY → INCIDENT_DECLARED → RECOVERY_IN_PROGRESS → VALIDATING → AWAITING_APPROVAL →
+RECOVERY_ACTIVE → FAILBACK_IN_PROGRESS → HEALTHY`
+
+Automation handles discovery, restore, health checks, deterministic comparison, replication
+observation, bounded replay, RTO/RPO calculation, and evidence generation. Protected approval is
+required for material reconciliation, promotion, and failback. The portfolio run used a documented
+self-review exception; production requires a different authorized reviewer from the initiator.
+
+## Evidence model
+
+`recovery-report.json` uses deterministic canonical JSON and includes run/scenario IDs, timestamp
+authorities, raw measurement inputs, lifecycle events, approvals, validations, replay outcomes, and
+failback state. Events form a previous-hash chain; the report carries a SHA-256 digest and KMS
+signature. Object Lock provides retention for the archived runtime artifact—local evidence is
+explicitly labeled `LOCAL_SIMULATION` and is not described as immutable.
+
+The AWS report digest is:
+
+```text
+16241016f4f920da50bc1e5bd647e16f7d35467d8c5988f3972f731c32b03f9f
+```
 
 ## Run locally
 
-Requirements: Python 3.11+, Terraform 1.8+ for IaC validation.
+Requirements: Python 3.11+ and Terraform 1.8+.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
-make lint typecheck test
+make verify
 make local-demo
 ```
 
-The drill creates `evidence/recovery-report.json` from controller state. To exercise commands:
+Useful commands:
 
 ```bash
 drctl status
-drctl validate
 drctl declare --scenario logical-data-corruption --failure-time 2026-01-01T00:00:00Z
 drctl recover-data --recovery-point 2025-12-31T23:59:55Z
 drctl validate-recovery
 drctl promote --approve --approver portfolio-owner --reference LOCAL-DEMO
+drctl failback --phase start --approve --approver portfolio-owner --reference LOCAL-DEMO
 drctl report
 ```
 
-Failback is deliberately two-step: `--phase start` and `--phase complete` each require `--approve`,
-`--both-regions-healthy`, `--data-consistent`, an approver, and a reference. AWS execution replaces
-the local operator flags with controller-collected regional probes.
+No workflow performs an unattended cloud deployment. AWS deployment and recovery paths remain
+manual, environment-protected, OIDC-authenticated, and owner-authorized.
 
 ## Repository map
 
 | Area | Purpose |
 |---|---|
-| `src/dr_platform` | synthetic API, router, state machine, orchestration, validation, AWS adapters, evidence |
-| `terraform/modules` | reusable global data, regional service, and GitHub OIDC modules |
-| `terraform/stacks` | independently planned bootstrap/global/Region A/Region B roots |
-| `tests` | transition, corruption, checksum, RTO/RPO, routing, approval, failback, evidence tests |
-| `docs` | architecture decisions, scenarios, runbook, security, evidence, and cost analysis |
-| `examples/supporting-data` | tiny public synthetic objects for S3 recovery validation |
-| `.github/workflows` | CI and owner-authorized AWS plan-only workflow |
+| `src/dr_platform` | API domain, state machine, router, validation, reconciliation, evidence adapters |
+| `terraform/modules` | reusable regional service, global data, and GitHub OIDC modules |
+| `terraform/stacks` | separate bootstrap, global, Region A, and Region B state boundaries |
+| `tests` | transition, RTO/RPO, integrity, replay, routing, metrics, approval, and failback tests |
+| `.github/workflows` | CI plus guarded deployment, recovery, evidence, and cleanup workflows |
+| `docs` | design decisions, threat model, scenarios, runtime proof, runbook, and cost model |
 
-## Evidence and honest claims
+Final CI: **84 tests**, **92.43% coverage**, strict mypy, Ruff, Terraform validation, workflow lint,
+Trivy, and gitleaks.
 
-- Local tests prove controller policy and deterministic validation logic.
-- Terraform describes intended AWS resources but has not been applied.
-- AWS availability, replication latency, restoration duration, and global-table behavior remain
-  unverified until Milestone 2 executes an owner-authorized drill.
-- No employer/customer design, identifiers, code, data, or operational claims are present.
+## Design boundaries
+
+- This is a bounded transaction-recovery demonstration, not a universal merge engine.
+- Synthetic routing is not evidence of managed global DNS/anycast failover.
+- Global Table LWW semantics prevent a claim of globally causal application timestamps.
+- The production target uses independent reviewers, longer evidence retention, multi-vantage health
+  checks, and organization-specific routing and reconciliation policy.
+- No employer/customer architecture, names, code, credentials, secrets, or data are included.
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) · [Scenarios](docs/disaster-scenarios.md) ·
-  [Orchestration](docs/recovery-orchestration.md) · [RTO/RPO](docs/rto-rpo.md)
+- [Architecture](docs/architecture.md) · [Disaster scenarios](docs/disaster-scenarios.md) ·
+  [Recovery orchestration](docs/recovery-orchestration.md) · [RTO/RPO](docs/rto-rpo.md)
 - [Reconciliation contract](docs/reconciliation-contract.md) ·
-  [AWS validation profile](docs/aws-validation-profile.md) ·
-  [AWS runtime failure review](docs/aws-runtime-failure-review.md) ·
-  [Milestone 2 preflight](docs/milestone-2-preflight.md)
-- [Security/threat model](docs/security-threat-model.md) ·
-  [Runtime evidence](docs/runtime-evidence.md) · [Cost model](docs/cost-model.md)
-- [Production vs demo](docs/production-vs-demo.md) · [Operator runbook](docs/runbook.md) ·
-  [ADRs](docs/adr/)
+  [Runtime evidence](docs/runtime-evidence.md) · [Security model](docs/security-threat-model.md)
+- [AWS validation profile](docs/aws-validation-profile.md) · [Runbook](docs/runbook.md) ·
+  [Cost model](docs/cost-model.md) · [Production versus demo](docs/production-vs-demo.md)
+- [Architecture decisions](docs/adr/)
 
-## Destruction and cost warning
+## Cost and teardown
 
-Nothing runs automatically. Use a disposable AWS account, set budgets, review plans, and obtain
-owner authorization before any apply or drill. DynamoDB PITR restores, replicated storage, KMS
-keys, logs, and API calls incur charges. See the [cost model](docs/cost-model.md).
+The controlled run is estimated at **USD 1.50–3.00**, below the USD 10 ceiling. APIs, Lambdas,
+DynamoDB tables/replicas, runtime S3 buckets, CloudWatch runtime resources, temporary IAM roles,
+and recovery targets were removed. Only the Object-Locked evidence bucket and its required
+encryption/signing keys remain intentionally; see the [cost model](docs/cost-model.md).

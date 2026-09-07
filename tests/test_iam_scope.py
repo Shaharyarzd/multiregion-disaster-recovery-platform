@@ -8,6 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "terraform/modules/github-oidc/main.tf").read_text(encoding="utf-8")
 DEPLOY_WORKFLOW = (ROOT / ".github/workflows/aws-deploy.yml").read_text(encoding="utf-8")
 PLAN_WORKFLOW = (ROOT / ".github/workflows/aws-plan.yml").read_text(encoding="utf-8")
+CLEANUP_WORKFLOW = (ROOT / ".github/workflows/aws-runtime-cleanup.yml").read_text(
+    encoding="utf-8"
+)
 STAGE_SCRIPT = (ROOT / "scripts/apply-regional-stage.sh").read_text(encoding="utf-8")
 REGIONAL_SERVICE = (ROOT / "terraform/modules/regional-service/main.tf").read_text(encoding="utf-8")
 DEPLOY = SOURCE.split('data "aws_iam_policy_document" "deploy"', 1)[1].split(
@@ -57,6 +60,16 @@ def test_temporary_replica_delete_is_exact_and_independently_gated() -> None:
     assert 'actions   = ["dynamodb:DeleteTableReplica"]' in statement
     assert "${var.secondary_region}" in statement
     assert ":table/${var.resource_prefix}-transactions" in statement
+
+
+def test_secondary_alias_cleanup_restores_exact_key_policy() -> None:
+    assert "key_id=032b1964-e252-4e69-bcc5-c69e9f944c10" in CLEANUP_WORKFLOW
+    assert '"Sid":"TemporaryExactSecondaryAliasCleanup"' in CLEANUP_WORKFLOW
+    assert '"Action":"kms:DeleteAlias"' in CLEANUP_WORKFLOW
+    assert '"Resource":"*"' in CLEANUP_WORKFLOW
+    assert "trap restore_secondary_policy EXIT" in CLEANUP_WORKFLOW
+    assert "trap - EXIT" in CLEANUP_WORKFLOW
+    assert CLEANUP_WORKFLOW.count("TemporaryExactSecondaryAliasCleanup") >= 5
 
 
 def test_resume_repairs_only_verified_tainted_resources_and_blocks_destroy() -> None:

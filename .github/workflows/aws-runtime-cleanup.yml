@@ -211,25 +211,26 @@ jobs:
         run: |
           table=portfolio-dr-transactions
           source_arn="arn:aws:dynamodb:us-east-1:293951765338:table/${table}"
-          test "$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'Table.TableArn' --output text)" = "$source_arn"
-          tags="$(aws dynamodb list-tags-of-resource --region us-east-1 --resource-arn "$source_arn" --output json)"
-          test "$(jq -r '.Tags[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
-          test "$(jq -r '.Tags[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
-          # shellcheck disable=SC2016
-          replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(not_null(Table.Replicas, `[]`))' --output text)"
-          if [ "$replicas" != "0" ]; then
-            exit 1
+          if aws dynamodb describe-table --region us-east-1 --table-name "$table" >/dev/null 2>&1; then
+            test "$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'Table.TableArn' --output text)" = "$source_arn"
+            tags="$(aws dynamodb list-tags-of-resource --region us-east-1 --resource-arn "$source_arn" --output json)"
+            test "$(jq -r '.Tags[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
+            test "$(jq -r '.Tags[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
+            # shellcheck disable=SC2016
+            replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(not_null(Table.Replicas, `[]`))' --output text)"
+            test "$replicas" = "0"
+            aws dynamodb update-table --region us-east-1 --table-name "$table" --no-deletion-protection-enabled >/dev/null
+            for attempt in {1..90}; do
+              status="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'Table.TableStatus' --output text)"
+              if [ "$status" = "ACTIVE" ]; then break; fi
+              test "$attempt" -lt 90
+              sleep 5
+            done
+            aws dynamodb delete-table --region us-east-1 --table-name "$table" >/dev/null
+            aws dynamodb wait table-not-exists --region us-east-1 --table-name "$table"
+          else
+            test -n "$RESUME_CLEANUP_RUN_ID"
           fi
-          test -n "$RESUME_CLEANUP_RUN_ID"
-          aws dynamodb update-table --region us-east-1 --table-name portfolio-dr-transactions --no-deletion-protection-enabled >/dev/null
-          for attempt in {1..90}; do
-            status="$(aws dynamodb describe-table --region us-east-1 --table-name portfolio-dr-transactions --query 'Table.TableStatus' --output text)"
-            if [ "$status" = "ACTIVE" ]; then break; fi
-            test "$attempt" -lt 90
-            sleep 5
-          done
-          aws dynamodb delete-table --region us-east-1 --table-name portfolio-dr-transactions >/dev/null
-          aws dynamodb wait table-not-exists --region us-east-1 --table-name portfolio-dr-transactions
           if aws iam get-role --role-name portfolio-dr-s3-replication >/dev/null 2>&1; then
             policies="$(aws iam list-role-policies --role-name portfolio-dr-s3-replication --query PolicyNames --output json)"
             test "$(jq 'length' <<<"$policies")" = "1"
@@ -240,8 +241,47 @@ jobs:
           else
             test -n "$RESUME_CLEANUP_RUN_ID"
           fi
-          aws kms delete-alias --region us-west-2 --alias-name alias/portfolio-dr-secondary
-          aws kms schedule-key-deletion --region us-west-2 --key-id 032b1964-e252-4e69-bcc5-c69e9f944c10 --pending-window-in-days 30 >/dev/null
+          key_id=032b1964-e252-4e69-bcc5-c69e9f944c10
+          key_arn="arn:aws:kms:us-west-2:293951765338:key/${key_id}"
+          key_state="$(aws kms describe-key --region us-west-2 --key-id "$key_id" --query 'KeyMetadata.KeyState' --output text)"
+          if [ "$key_state" = "Enabled" ]; then
+            key_tags="$(aws kms list-resource-tags --region us-west-2 --key-id "$key_id" --output json)"
+            test "$(jq -r '.Tags[] | select(.TagKey == "Project") | .TagValue' <<<"$key_tags")" = "portfolio-dr"
+            test "$(jq -r '.Tags[] | select(.TagKey == "DataClassification") | .TagValue' <<<"$key_tags")" = "SYNTHETIC"
+            if alias_target="$(aws kms describe-key --region us-west-2 --key-id alias/portfolio-dr-secondary --query 'KeyMetadata.KeyId' --output text 2>/dev/null)"; then
+              test "$alias_target" = "$key_id"
+              original_policy="$(aws kms get-key-policy --region us-west-2 --key-id "$key_id" --policy-name default --query Policy --output text)"
+              test "$(jq '[.Statement[] | select(.Sid == "TemporaryExactSecondaryAliasCleanup")] | length' <<<"$original_policy")" = "0"
+              temporary_policy="$(jq -c '.Statement += [{"Sid":"TemporaryExactSecondaryAliasCleanup","Effect":"Allow","Principal":{"AWS":"arn:aws:iam::293951765338:role/portfolio-dr-github-deploy"},"Action":"kms:DeleteAlias","Resource":"*"}]' <<<"$original_policy")"
+              policy_installed=0
+              restore_secondary_policy() {
+                if [ "$policy_installed" = "1" ]; then
+                  aws kms put-key-policy --region us-west-2 --key-id "$key_id" --policy-name default --policy "$original_policy" >/dev/null
+                fi
+              }
+              trap restore_secondary_policy EXIT
+              aws kms put-key-policy --region us-west-2 --key-id "$key_id" --policy-name default --policy "$temporary_policy" >/dev/null
+              policy_installed=1
+              installed_policy="$(aws kms get-key-policy --region us-west-2 --key-id "$key_id" --policy-name default --query Policy --output text)"
+              test "$(jq -r '.Statement[] | select(.Sid == "TemporaryExactSecondaryAliasCleanup") | .Principal.AWS' <<<"$installed_policy")" = "arn:aws:iam::293951765338:role/portfolio-dr-github-deploy"
+              test "$(jq -r '.Statement[] | select(.Sid == "TemporaryExactSecondaryAliasCleanup") | .Action' <<<"$installed_policy")" = "kms:DeleteAlias"
+              test "$(jq -r '.Statement[] | select(.Sid == "TemporaryExactSecondaryAliasCleanup") | .Resource' <<<"$installed_policy")" = "*"
+              aws kms delete-alias --region us-west-2 --alias-name alias/portfolio-dr-secondary
+              aws kms put-key-policy --region us-west-2 --key-id "$key_id" --policy-name default --policy "$original_policy" >/dev/null
+              policy_installed=0
+              trap - EXIT
+              restored_policy="$(aws kms get-key-policy --region us-west-2 --key-id "$key_id" --policy-name default --query Policy --output text)"
+              test "$(jq '[.Statement[] | select(.Sid == "TemporaryExactSecondaryAliasCleanup")] | length' <<<"$restored_policy")" = "0"
+            else
+              test -n "$RESUME_CLEANUP_RUN_ID"
+            fi
+            if aws kms describe-key --region us-west-2 --key-id alias/portfolio-dr-secondary >/dev/null 2>&1; then exit 1; fi
+            test "$(aws kms describe-key --region us-west-2 --key-id "$key_id" --query 'KeyMetadata.Arn' --output text)" = "$key_arn"
+            aws kms schedule-key-deletion --region us-west-2 --key-id "$key_id" --pending-window-in-days 30 >/dev/null
+          else
+            test "$key_state" = "PendingDeletion"
+            test -n "$RESUME_CLEANUP_RUN_ID"
+          fi
 
       - name: Reconcile preserved global state without touching retained evidence
         run: |
@@ -289,7 +329,7 @@ jobs:
             --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg retained "$retained" \
             --arg resumed_from "${{ inputs.resume_cleanup_run_id }}" \
-            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,resumed_from_cleanup_run:($resumed_from | if . == "" then null else . end),preserved_failed_attempts:[{run_id:"34110697442",phase:"RegionARuntimeTeardown",failure_code:"TERRAFORM_PROVIDER_LIST_INSTANCE_PROFILES_PERMISSION",partial_cleanup:true},{run_id:"34131653420",phase:"RegionARuntimeTeardown",failure_code:"EXACT_ROLE_ID_HCL_QUOTING_GUARD",partial_cleanup:false},{run_id:"34132241781",phase:"GlobalTableTeardown",failure_code:"DELETE_TABLE_REPLICA_PERMISSION_REQUIRED",partial_cleanup:true},{run_id:"34133795559",phase:"ExactReplicaTeardown",failure_code:"REPLICAS_NULL_OBSERVATION_AFTER_SUCCESS",partial_cleanup:true}],disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_kms_dependencies:["primary-data-encryption","evidence-signing"],secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
+            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,resumed_from_cleanup_run:($resumed_from | if . == "" then null else . end),preserved_failed_attempts:[{run_id:"34110697442",phase:"RegionARuntimeTeardown",failure_code:"TERRAFORM_PROVIDER_LIST_INSTANCE_PROFILES_PERMISSION",partial_cleanup:true},{run_id:"34131653420",phase:"RegionARuntimeTeardown",failure_code:"EXACT_ROLE_ID_HCL_QUOTING_GUARD",partial_cleanup:false},{run_id:"34132241781",phase:"GlobalTableTeardown",failure_code:"DELETE_TABLE_REPLICA_PERMISSION_REQUIRED",partial_cleanup:true},{run_id:"34133795559",phase:"ExactReplicaTeardown",failure_code:"REPLICAS_NULL_OBSERVATION_AFTER_SUCCESS",partial_cleanup:true},{run_id:"34134360955",phase:"SecondaryKeyTeardown",failure_code:"SECONDARY_KEY_POLICY_DELETE_ALIAS_REQUIRED",partial_cleanup:true}],disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_kms_dependencies:["primary-data-encryption","evidence-signing"],secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
 
       - name: Preserve cleanup state and proof
         if: always()

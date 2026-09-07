@@ -391,6 +391,206 @@ def prepare(args: argparse.Namespace) -> None:
     print(json.dumps(structured_recovery_log(incident, "PITR_CHECKPOINT", utc_now())))
 
 
+def retry_failed_prepare(args: argparse.Namespace) -> None:
+    """Resume the known failed attempt without injecting a second corruption."""
+    if not all(
+        (
+            args.scenario_a,
+            args.recovery_point,
+            args.failure_lower_bound,
+            args.failure_upper_bound,
+            args.failed_run_id,
+            args.attempt_id,
+        )
+    ):
+        raise ValueError("retry-failed-prepare requires all failed-run evidence arguments")
+    session = boto3.session.Session()
+    identity = session.client("sts").get_caller_identity()
+    if identity["Account"] != ACCOUNT:
+        raise RuntimeError("wrong AWS account")
+    scenario_a = json.loads(args.scenario_a.read_text())
+    scenario_a_digest = scenario_a.pop("sha256", None)
+    calculated_a_digest = hashlib.sha256(
+        json.dumps(scenario_a, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if scenario_a_digest != calculated_a_digest or scenario_a.get("status") != "PASS":
+        raise RuntimeError("Scenario A evidence integrity/status check failed")
+    scenario_a["sha256"] = scenario_a_digest
+    dynamo = session.client("dynamodb", region_name=PRIMARY_REGION)
+    clock_skew = aws_clock_skew_ms(dynamo)
+    if clock_skew > 1500:
+        raise RuntimeError(f"clock skew bound failed: {clock_skew:.3f}ms")
+    endpoints = (args.region_a, args.region_b)
+    if any(api_json(endpoint, "/health").get("status") != "healthy" for endpoint in endpoints):
+        raise RuntimeError("regional API health failed")
+
+    recovery_point = parse_time(args.recovery_point)
+    failure_lower = parse_time(args.failure_lower_bound)
+    failure_upper = parse_time(args.failure_upper_bound)
+    if not recovery_point < failure_lower <= failure_upper:
+        raise RuntimeError("invalid observed recovery/failure time bounds")
+    live_before = scan(dynamo, TABLE)
+    anchors = [
+        item
+        for item in live_before
+        if item.payload.startswith("synthetic-order:scenario-b-anchor-")
+        and args.failed_run_id in item.payload
+    ]
+    if len(anchors) != 2:
+        raise RuntimeError("exact failed-run anchor pair was not found")
+    minimum_safe_point = max(item.timestamp for item in anchors) + timedelta(seconds=2)
+    first_concurrent = min(
+        (
+            item.timestamp
+            for item in live_before
+            if f"scenario-b-live-{args.failed_run_id}" in item.payload
+        ),
+        default=None,
+    )
+    if recovery_point < minimum_safe_point or (
+        first_concurrent is not None and recovery_point >= first_concurrent
+    ):
+        raise RuntimeError("recovery point is outside the observed safe interval")
+
+    orchestrator = RecoveryOrchestrator()
+    incident = orchestrator.declare(Scenario.LOGICAL_CORRUPTION, failure_upper)
+    incident.run_id = args.failed_run_id
+    incident.scenario_id = "scenario-b-logical-corruption"
+    incident.evidence_scope = "AWS_RUNTIME"
+    incident.clock_skew_ms_observed = clock_skew
+    incident.clock_skew_ms_limit = 1500
+    incident.timestamp_sources = {
+        "incident_declaration": "RETRY_CONTROLLER_UTC_SYNCED",
+        "failure_or_corruption": "BOUNDED_BY_TRANSACTION_AND_GITHUB_JOB_LOG",
+        "validation": "CONTROLLER_UTC_SYNCED",
+        "recovered_transaction": "DYNAMODB_PITR_READBACK_UTC_VALIDATED",
+    }
+    orchestrator.start_recovery(incident, recovery_point)
+    target = recovery_target_name(TABLE, args.failed_run_id)
+    restore_started = utc_now()
+
+    concurrent: list[Transaction] = []
+    stop = threading.Event()
+    writer = threading.Thread(
+        target=writer_loop,
+        args=(endpoints, args.attempt_id, concurrent, stop),
+        daemon=True,
+    )
+    writer.start()
+    try:
+        DynamoRecoveryAdapter(PRIMARY_REGION).restore_to_isolated_table(
+            f"arn:aws:dynamodb:{PRIMARY_REGION}:{ACCOUNT}:table/{TABLE}",
+            target,
+            recovery_point,
+            kms_key_arn=PRIMARY_KEY,
+        )
+        wait_table(dynamo, target)
+        proof = configure_target(dynamo, target, args.failed_run_id)
+        restore_ready = utc_now()
+        deadline = time.monotonic() + 30
+        while len(concurrent) < 4 and time.monotonic() < deadline:
+            time.sleep(0.25)
+    finally:
+        stop.set()
+        writer.join(timeout=20)
+    if len(concurrent) < 2:
+        raise RuntimeError("controlled concurrent retry writers did not remain active")
+
+    restored = scan(dynamo, target)
+    restored_map = {item.transaction_id: item for item in restored}
+    known = list(scenario_a["baseline_transactions"])
+    known.extend(
+        [
+            scenario_a["regional_outage"]["survivor_transaction"],
+            scenario_a["regional_return"]["transaction"],
+        ]
+    )
+    known_transactions = [tx_from_mapping(item) for item in known] + anchors
+    if any(restored_map.get(item.transaction_id) != item for item in known_transactions):
+        raise RuntimeError("PITR read-back failed the independently recorded known-key subset")
+    if any(item.timestamp > recovery_point for item in restored):
+        raise RuntimeError("PITR target contains a transaction newer than the selected point")
+
+    live_after = scan(dynamo, TABLE)
+    live_map = {item.transaction_id: item for item in live_after}
+    missing = [item for item in restored if item.transaction_id not in live_map]
+    modified = [
+        item
+        for item in restored
+        if item.transaction_id in live_map
+        and live_map[item.transaction_id].canonical() != item.canonical()
+    ]
+    corrupt_payload = f"synthetic-corruption:{args.failed_run_id}"
+    if len(missing) != 1 or len(modified) != 1:
+        raise RuntimeError("failed-run fault set was not exactly one deletion and one mutation")
+    deleted, corrupted = missing[0], modified[0]
+    if live_map[corrupted.transaction_id].payload != corrupt_payload:
+        raise RuntimeError("modified item does not carry the exact failed-run corruption marker")
+
+    orchestrator.begin_validation(incident, restore_ready, restore_configuration=proof)
+    incident.runtime_evidence = {
+        "scenario_a": scenario_a,
+        "failed_attempt": {
+            "status": "FAIL",
+            "github_run_id": "34097882635",
+            "failed_at": "2026-09-07T08:01:53.748109Z",
+            "phase": "RestoreTableToPointInTime",
+            "failure_code": "MISSING_DYNAMODB_QUERY_ON_ISOLATED_TARGET",
+            "cloudtrail_event_id": "af3fb862-f642-4a65-bb5d-5ee5660e1f1a",
+            "cloudtrail_request_id": "H9M2TRJMG9BKDHP2G7403SSQ5VVV4KQNSO5AEMVJF66Q9ASUAAJG",
+            "target_created": False,
+        },
+        "process_resume": {
+            "checkpoint_state": incident.state.value,
+            "checkpoint_written_at": iso(utc_now()),
+            "approval_boundary": "aws-recovery-approval",
+            "reconstructed_after_pre_checkpoint_failure": True,
+        },
+        "pitr": {
+            "target": target,
+            "isolated": target.startswith("portfolio-dr-recovery-"),
+            "recovery_point": iso(recovery_point),
+            "recovery_point_basis": "LATEST_SAFE_BOUND_AFTER_TWO_OBSERVED_ANCHORS",
+            "restore_started": iso(restore_started),
+            "restore_ready": iso(restore_ready),
+            "restore_duration_seconds": (restore_ready - restore_started).total_seconds(),
+            "configuration": proof,
+        },
+        "fault": {
+            "deleted_transaction_id": deleted.transaction_id,
+            "corrupted_transaction_id": corrupted.transaction_id,
+            "corrupt_payload_sha256": hashlib.sha256(corrupt_payload.encode()).hexdigest(),
+            "failure_lower_bound": iso(failure_lower),
+            "failure_upper_bound": iso(failure_upper),
+        },
+        "validation_provenance": {
+            "point_manifest": "ISOLATED_PITR_READBACK",
+            "independent_known_key_count": len(known_transactions),
+            "independent_known_keys_verified": True,
+            "full_pre_fault_manifest_missing_due_to_preserved_failed_attempt": True,
+        },
+        "concurrent_writes": transaction_dicts(concurrent),
+        "clock": {
+            "observed_skew_bound_ms": clock_skew,
+            "source": "AWS_HTTP_DATE_VS_GITHUB_RUNNER_MIDPOINT",
+        },
+    }
+    store = LocalIncidentStore(args.work_dir)
+    store.save(incident)
+    write_json(
+        args.work_dir / "checkpoint.json",
+        {
+            "point_snapshot": transaction_dicts(restored),
+            "concurrent_writes": transaction_dicts(concurrent),
+            "deleted": deleted.canonical(),
+            "corrupted": corrupted.canonical(),
+            "corrupt_payload": corrupt_payload,
+        },
+    )
+    write_json(args.output, {"status": "PASS", **incident.runtime_evidence})
+    print(json.dumps(structured_recovery_log(incident, "PITR_RETRY_CHECKPOINT", utc_now())))
+
+
 def s3_proof(session: Any, run_id: str) -> dict[str, Any]:
     primary = session.client("s3", region_name=PRIMARY_REGION)
     secondary = session.client("s3", region_name=SECONDARY_REGION)
@@ -808,6 +1008,10 @@ def resume(args: argparse.Namespace) -> None:
     if newest is None:
         raise RuntimeError("restored dataset has no authoritative transaction")
     rpo = measured_rpo_seconds(incident.failure_at, newest)
+    failure_lower = parse_time(
+        str(incident.runtime_evidence["fault"].get("failure_lower_bound", iso(incident.failure_at)))
+    )
+    rpo_lower = measured_rpo_seconds(failure_lower, newest)
     replication_lag_ms = (
         parse_time(str(secondary_observation["observed_at"]))
         - parse_time(str(primary_observation["observed_at"]))
@@ -848,7 +1052,9 @@ def resume(args: argparse.Namespace) -> None:
                 "reference": iso(incident.failure_at),
                 "recovered_point": iso(newest),
                 "measured_seconds": rpo,
-                "classification": "BOUNDED_OBSERVED",
+                "measured_lower_bound_seconds": min(rpo_lower, rpo),
+                "measured_upper_bound_seconds": max(rpo_lower, rpo),
+                "classification": "BOUNDED_OBSERVED_INTERVAL",
                 "lww_caveat": (
                     "DynamoDB Global Tables use last-writer-wins conflict resolution; application "
                     "timestamps are evidence fields, not causal ordering. RPO is bounded to the "
@@ -882,13 +1088,18 @@ def resume(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("prepare", "resume"))
+    parser.add_argument("phase", choices=("prepare", "retry-failed-prepare", "resume"))
     parser.add_argument("--region-a", required=True)
     parser.add_argument("--region-b", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--work-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scenario-a", type=Path)
+    parser.add_argument("--failed-run-id", default="")
+    parser.add_argument("--attempt-id", default="")
+    parser.add_argument("--recovery-point", default="")
+    parser.add_argument("--failure-lower-bound", default="")
+    parser.add_argument("--failure-upper-bound", default="")
     parser.add_argument("--approver", default="")
     parser.add_argument("--approval-reference", default="")
     args = parser.parse_args()
@@ -896,6 +1107,8 @@ def main() -> None:
         if args.scenario_a is None:
             raise ValueError("prepare requires Scenario A evidence")
         prepare(args)
+    elif args.phase == "retry-failed-prepare":
+        retry_failed_prepare(args)
     else:
         if not args.approver or not args.approval_reference:
             raise ValueError("resume requires explicit approver and approval reference")

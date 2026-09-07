@@ -59,12 +59,17 @@ jobs:
           test "$(aws sts get-caller-identity --query Account --output text)" = "293951765338"
           test "${AWS_REGION}" = "us-east-1"
 
-      - name: Prepare PITR target and persist non-destructive checkpoint
+      - name: Retry failed PITR attempt without repeating corruption
         run: |
-          python scripts/aws-runtime-scenario-b.py prepare \
+          python scripts/aws-runtime-scenario-b.py retry-failed-prepare \
             --region-a https://cvjvklgn0b.execute-api.us-east-1.amazonaws.com \
             --region-b https://n7hsrlcdu8.execute-api.us-west-2.amazonaws.com \
-            --run-id "github-${GITHUB_RUN_ID}" \
+            --run-id github-34097882635 \
+            --failed-run-id github-34097882635 \
+            --attempt-id "github-${GITHUB_RUN_ID}" \
+            --recovery-point 2026-09-07T07:56:31.790879Z \
+            --failure-lower-bound 2026-09-07T08:01:53.035325Z \
+            --failure-upper-bound 2026-09-07T08:01:53.748109Z \
             --scenario-a scenario-a/aws-runtime-baseline.json \
             --work-dir evidence/scenario-b-state \
             --output evidence/scenario-b-prepare.json
@@ -74,7 +79,7 @@ jobs:
           python scripts/aws-runtime-scenario-b.py resume \
             --region-a https://cvjvklgn0b.execute-api.us-east-1.amazonaws.com \
             --region-b https://n7hsrlcdu8.execute-api.us-west-2.amazonaws.com \
-            --run-id "github-${GITHUB_RUN_ID}" \
+            --run-id github-34097882635 \
             --work-dir evidence/scenario-b-state \
             --output evidence/aws-runtime-scenario-b.json \
             --approver "${GITHUB_ACTOR}" \

@@ -583,6 +583,16 @@ data "aws_iam_policy_document" "recovery" {
     resources = ["arn:${data.aws_partition.current.partition}:kms:${var.primary_region}:${data.aws_caller_identity.current.account_id}:key/a7e1a0f4-be05-474d-b19d-bdf6da573b40"]
   }
   statement {
+    sid       = "CreatePrimaryRecoveryAwsResourceGrant"
+    actions   = ["kms:CreateGrant"]
+    resources = ["arn:${data.aws_partition.current.partition}:kms:${var.primary_region}:${data.aws_caller_identity.current.account_id}:key/a7e1a0f4-be05-474d-b19d-bdf6da573b40"]
+    condition {
+      test     = "Bool"
+      variable = "kms:GrantIsForAWSResource"
+      values   = ["true"]
+    }
+  }
+  statement {
     sid = "ReadRecoverySignals"
     actions = [
       "cloudwatch:GetMetricData",

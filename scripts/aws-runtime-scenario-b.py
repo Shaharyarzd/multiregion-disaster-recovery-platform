@@ -540,6 +540,24 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
             "cloudtrail_request_id": "H9M2TRJMG9BKDHP2G7403SSQ5VVV4KQNSO5AEMVJF66Q9ASUAAJG",
             "target_created": False,
         },
+        "failed_attempts": [
+            {
+                "status": "FAIL",
+                "github_run_id": "34097882635",
+                "failed_at": "2026-09-07T08:01:53.748109Z",
+                "phase": "RestoreTableToPointInTime",
+                "failure_code": "MISSING_DYNAMODB_QUERY_ON_ISOLATED_TARGET",
+                "target_created": False,
+            },
+            {
+                "status": "FAIL",
+                "github_run_id": "34100182403",
+                "failed_at": "2026-09-07T08:22:38.228547Z",
+                "phase": "RestoreTableToPointInTime",
+                "failure_code": "MISSING_DYNAMODB_UPDATE_ITEM_ON_ISOLATED_TARGET",
+                "target_created": False,
+            },
+        ],
         "process_resume": {
             "checkpoint_state": incident.state.value,
             "checkpoint_written_at": iso(utc_now()),

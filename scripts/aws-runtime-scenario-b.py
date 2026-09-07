@@ -557,6 +557,14 @@ def retry_failed_prepare(args: argparse.Namespace) -> None:
                 "failure_code": "MISSING_DYNAMODB_UPDATE_ITEM_ON_ISOLATED_TARGET",
                 "target_created": False,
             },
+            {
+                "status": "FAIL",
+                "github_run_id": "34100989020",
+                "failed_at": "2026-09-07T08:31:45.121360Z",
+                "phase": "RestoreTableToPointInTime",
+                "failure_code": "MISSING_DYNAMODB_DELETE_ITEM_ON_ISOLATED_TARGET",
+                "target_created": False,
+            },
         ],
         "process_resume": {
             "checkpoint_state": incident.state.value,

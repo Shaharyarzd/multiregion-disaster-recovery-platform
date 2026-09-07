@@ -526,7 +526,7 @@ data "aws_iam_policy_document" "recovery" {
   }
   statement {
     sid       = "QueryPrimaryRegionIsolatedRecoveryTargets"
-    actions   = ["dynamodb:Query", "dynamodb:UpdateItem"]
+    actions   = ["dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:UpdateItem"]
     resources = ["arn:${data.aws_partition.current.partition}:dynamodb:${var.primary_region}:${data.aws_caller_identity.current.account_id}:table/${var.resource_prefix}-recovery-*"]
   }
   statement {

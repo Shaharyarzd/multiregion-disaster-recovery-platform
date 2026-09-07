@@ -18,6 +18,19 @@ Set an account budget and anomaly alert before apply. Tag every resource. Retain
 their deletion window and account for that cost. PITR restore creates another table, so delete the
 isolated table only after evidence capture and explicit owner authorization.
 
+## Milestone 2 observed cost posture
+
+The conservative wall-clock validation window was `2026-09-01T08:54:46Z` through
+`2026-09-07T15:03:09Z` (`6d 6h 8m 23s`), including owner-approval pauses rather than continuous
+execution. All usage-bearing runtime resources were removed. Based on the documented regional
+prices and tiny observed request/data volumes, the estimated validation charge is **USD 1.50–3.00**;
+the provider invoice remains authoritative and can lag. This remains below the USD 10 stop ceiling.
+
+Two enabled customer-managed keys and a 30,861-byte Object-Locked report plus its tiny signature
+and digest remain intentionally. Their expected residual cost is approximately **USD 0.067/day for
+the two keys plus negligible S3 storage** until owner-approved evidence teardown. The secondary key
+is already `PendingDeletion`; no other disposable workload remains.
+
 ## Active-active trade-off
 
 Active-active pays for two runtime/control surfaces, replicated writes, cross-region transfer,

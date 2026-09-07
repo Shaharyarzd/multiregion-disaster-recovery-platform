@@ -1,0 +1,246 @@
+name: Controlled AWS runtime cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type CLEANUP_DISPOSABLE_MILESTONE_2
+        required: true
+        type: string
+      deployment_state_run_id:
+        description: Known-good deployment run containing the final Terraform states
+        required: true
+        default: "33643935068"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  id-token: write
+
+concurrency:
+  group: portfolio-dr-aws-control-plane
+  cancel-in-progress: false
+
+jobs:
+  recovery-target:
+    environment: aws-recovery-approval
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce cleanup confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "CLEANUP_DISPOSABLE_MILESTONE_2"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RECOVERY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Delete exact isolated recovery target
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "293951765338"
+          target=portfolio-dr-recovery-github-34097882635
+          arn="arn:aws:dynamodb:us-east-1:293951765338:table/${target}"
+          test "$(aws dynamodb describe-table --region us-east-1 --table-name "$target" --query 'Table.TableName' --output text)" = "$target"
+          tags="$(aws dynamodb list-tags-of-resource --region us-east-1 --resource-arn "$arn" --output json)"
+          test "$(jq -r '.Tags[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
+          test "$(jq -r '.Tags[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
+          test "$(jq -r '.Tags[] | select(.Key == "RecoveryPurpose") | .Value' <<<"$tags")" = "isolated-validation"
+          test "$(jq -r '.Tags[] | select(.Key == "RecoveryRun") | .Value' <<<"$tags")" = "github-34097882635"
+          aws dynamodb update-table --region us-east-1 --table-name "$target" --no-deletion-protection-enabled >/dev/null
+          for attempt in {1..90}; do
+            status="$(aws dynamodb describe-table --region us-east-1 --table-name "$target" --query 'Table.TableStatus' --output text)"
+            if [ "$status" = "ACTIVE" ]; then break; fi
+            test "$attempt" -lt 90
+            sleep 5
+          done
+          aws dynamodb delete-table --region us-east-1 --table-name "$target" >/dev/null
+          aws dynamodb wait table-not-exists --region us-east-1 --table-name "$target"
+
+  disposable-runtime:
+    needs: recovery-target
+    environment: aws-deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Enforce cleanup confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "CLEANUP_DISPOSABLE_MILESTONE_2"
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: portfolio-dr-deployment-state
+          path: .
+          run-id: ${{ inputs.deployment_state_run_id }}
+          github-token: ${{ github.token }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Guard exact account, resources, tags, and retained archive
+        run: |
+          test "$(aws sts get-caller-identity --query Account --output text)" = "293951765338"
+          test "$(aws apigatewayv2 get-api --region us-east-1 --api-id cvjvklgn0b --query Name --output text)" = "portfolio-dr-us-east-1"
+          test "$(aws apigatewayv2 get-api --region us-west-2 --api-id n7hsrlcdu8 --query Name --output text)" = "portfolio-dr-us-west-2"
+          for spec in \
+            'us-east-1 cvjvklgn0b active-a' \
+            'us-west-2 n7hsrlcdu8 active-b'; do
+            read -r region api_id region_role <<<"$spec"
+            arn="arn:aws:apigateway:${region}::/apis/${api_id}"
+            tags="$(aws apigatewayv2 get-tags --region "$region" --resource-arn "$arn" --query Tags --output json)"
+            test "$(jq -r '.Project' <<<"$tags")" = "portfolio-dr"
+            test "$(jq -r '.DataClassification' <<<"$tags")" = "SYNTHETIC"
+            test "$(jq -r '.RegionRole' <<<"$tags")" = "$region_role"
+          done
+          test "$(aws s3api get-object-lock-configuration --bucket portfolio-dr-293951765338-evidence --query 'ObjectLockConfiguration.ObjectLockEnabled' --output text)" = "Enabled"
+          test "$(aws s3api list-object-versions --bucket portfolio-dr-293951765338-evidence --prefix evidence/scenario-b-logical-corruption/github-34097882635/ --query 'length(Versions)' --output text)" -ge 4
+
+      - name: Initialize exact preserved states and build artifact
+        run: |
+          ./scripts/build-lambda.sh
+          terraform -chdir=terraform/stacks/global init -input=false
+          terraform -chdir=terraform/stacks/region-a init -input=false
+          terraform -chdir=terraform/stacks/region-b init -input=false
+
+      - name: Destroy Region A runtime
+        run: |
+          terraform -chdir=terraform/stacks/region-a plan -destroy -input=false -out=destroy.tfplan \
+            -var='table_name=portfolio-dr-transactions' \
+            -var='table_arn=arn:aws:dynamodb:us-east-1:293951765338:table/portfolio-dr-transactions' \
+            -var='table_kms_key_arn=arn:aws:kms:us-east-1:293951765338:key/a7e1a0f4-be05-474d-b19d-bdf6da573b40' \
+            -var='create_stage=true' -var='stage_tags_enabled=true' -var='stage_traffic_enabled=true'
+          terraform -chdir=terraform/stacks/region-a show -json destroy.tfplan | jq -e \
+            'all(.resource_changes[]?; (.change.actions == ["delete"]) or (.change.actions == ["read"]) or (.change.actions == ["no-op"]))' >/dev/null
+          terraform -chdir=terraform/stacks/region-a apply -input=false -auto-approve destroy.tfplan
+
+      - name: Destroy Region B runtime
+        run: |
+          terraform -chdir=terraform/stacks/region-b plan -destroy -input=false -out=destroy.tfplan \
+            -var='table_name=portfolio-dr-transactions' \
+            -var='table_arn=arn:aws:dynamodb:us-west-2:293951765338:table/portfolio-dr-transactions' \
+            -var='table_kms_key_arn=arn:aws:kms:us-west-2:293951765338:key/032b1964-e252-4e69-bcc5-c69e9f944c10' \
+            -var='create_stage=true' -var='stage_tags_enabled=true' -var='stage_traffic_enabled=true'
+          terraform -chdir=terraform/stacks/region-b show -json destroy.tfplan | jq -e \
+            'all(.resource_changes[]?; (.change.actions == ["delete"]) or (.change.actions == ["read"]) or (.change.actions == ["no-op"]))' >/dev/null
+          terraform -chdir=terraform/stacks/region-b apply -input=false -auto-approve destroy.tfplan
+
+      - name: Remove replication and empty exact disposable buckets
+        run: |
+          aws s3api delete-bucket-replication --bucket portfolio-dr-293951765338-us-east-1
+          for bucket in portfolio-dr-293951765338-us-east-1 portfolio-dr-293951765338-us-west-2; do
+            tags="$(aws s3api get-bucket-tagging --bucket "$bucket" --output json)"
+            test "$(jq -r '.TagSet[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
+            test "$(jq -r '.TagSet[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
+            while true; do
+              versions="$(aws s3api list-object-versions --bucket "$bucket" --output json)"
+              delete_set="$(jq -c '{Objects: (((.Versions // []) + (.DeleteMarkers // [])) | map({Key,VersionId})), Quiet: true}' <<<"$versions")"
+              count="$(jq '.Objects | length' <<<"$delete_set")"
+              test "$count" -le 1000
+              if [ "$count" -eq 0 ]; then break; fi
+              aws s3api delete-objects --bucket "$bucket" --delete "$delete_set" >/dev/null
+            done
+            aws s3api delete-bucket --bucket "$bucket"
+          done
+
+      - name: Remove exact Global Table and secondary data-key dependencies
+        run: |
+          aws dynamodb update-table --region us-west-2 --table-name portfolio-dr-transactions --no-deletion-protection-enabled >/dev/null
+          for attempt in {1..90}; do
+            status="$(aws dynamodb describe-table --region us-west-2 --table-name portfolio-dr-transactions --query 'Table.TableStatus' --output text)"
+            if [ "$status" = "ACTIVE" ]; then break; fi
+            test "$attempt" -lt 90
+            sleep 5
+          done
+          aws dynamodb update-table --region us-east-1 --table-name portfolio-dr-transactions --replica-updates Delete='{RegionName=us-west-2}' >/dev/null
+          for attempt in {1..180}; do
+            replicas="$(aws dynamodb describe-table --region us-east-1 --table-name portfolio-dr-transactions --query 'length(Table.Replicas)' --output text)"
+            if [ "$replicas" = "0" ]; then break; fi
+            test "$attempt" -lt 180
+            sleep 5
+          done
+          aws dynamodb update-table --region us-east-1 --table-name portfolio-dr-transactions --no-deletion-protection-enabled >/dev/null
+          for attempt in {1..90}; do
+            status="$(aws dynamodb describe-table --region us-east-1 --table-name portfolio-dr-transactions --query 'Table.TableStatus' --output text)"
+            if [ "$status" = "ACTIVE" ]; then break; fi
+            test "$attempt" -lt 90
+            sleep 5
+          done
+          aws dynamodb delete-table --region us-east-1 --table-name portfolio-dr-transactions >/dev/null
+          aws dynamodb wait table-not-exists --region us-east-1 --table-name portfolio-dr-transactions
+          policies="$(aws iam list-role-policies --role-name portfolio-dr-s3-replication --query PolicyNames --output json)"
+          test "$(jq 'length' <<<"$policies")" = "1"
+          policy="$(jq -r '.[0] | select(startswith("terraform-"))' <<<"$policies")"
+          test -n "$policy"
+          aws iam delete-role-policy --role-name portfolio-dr-s3-replication --policy-name "$policy"
+          aws iam delete-role --role-name portfolio-dr-s3-replication
+          aws kms delete-alias --region us-west-2 --alias-name alias/portfolio-dr-secondary
+          aws kms schedule-key-deletion --region us-west-2 --key-id 032b1964-e252-4e69-bcc5-c69e9f944c10 --pending-window-in-days 30 >/dev/null
+
+      - name: Reconcile preserved global state without touching retained evidence
+        run: |
+          terraform -chdir=terraform/stacks/global state rm \
+            module.data.aws_dynamodb_table.transactions \
+            module.data.aws_iam_role.replication \
+            module.data.aws_iam_role_policy.replication \
+            module.data.aws_kms_alias.secondary \
+            module.data.aws_kms_key.secondary \
+            module.data.aws_s3_bucket.primary \
+            module.data.aws_s3_bucket.secondary \
+            module.data.aws_s3_bucket_public_access_block.primary \
+            module.data.aws_s3_bucket_public_access_block.secondary \
+            module.data.aws_s3_bucket_replication_configuration.primary_to_secondary \
+            module.data.aws_s3_bucket_server_side_encryption_configuration.primary \
+            module.data.aws_s3_bucket_server_side_encryption_configuration.secondary \
+            module.data.aws_s3_bucket_versioning.primary \
+            module.data.aws_s3_bucket_versioning.secondary
+
+      - name: Verify cleanup and retained evidence dependencies
+        run: |
+          test "$(terraform -chdir=terraform/stacks/region-a state list | grep -c '^module.service.aws_' || true)" = "0"
+          test "$(terraform -chdir=terraform/stacks/region-b state list | grep -c '^module.service.aws_' || true)" = "0"
+          retained="$(terraform -chdir=terraform/stacks/global state list | grep '^module.data.aws_' | sort)"
+          expected=$'module.data.aws_kms_alias.primary\nmodule.data.aws_kms_key.evidence_signing\nmodule.data.aws_kms_key.primary\nmodule.data.aws_s3_bucket.evidence\nmodule.data.aws_s3_bucket_object_lock_configuration.evidence\nmodule.data.aws_s3_bucket_public_access_block.evidence\nmodule.data.aws_s3_bucket_server_side_encryption_configuration.evidence\nmodule.data.aws_s3_bucket_versioning.evidence'
+          test "$retained" = "$expected"
+          test "$(aws s3api get-object-lock-configuration --bucket portfolio-dr-293951765338-evidence --query 'ObjectLockConfiguration.ObjectLockEnabled' --output text)" = "Enabled"
+          test "$(aws kms describe-key --region us-east-1 --key-id a7e1a0f4-be05-474d-b19d-bdf6da573b40 --query 'KeyMetadata.KeyState' --output text)" = "Enabled"
+          test "$(aws kms describe-key --region us-east-1 --key-id de713abd-c143-49ac-8b9b-92d8d5aa2f8c --query 'KeyMetadata.KeyState' --output text)" = "Enabled"
+          test "$(aws kms describe-key --region us-west-2 --key-id 032b1964-e252-4e69-bcc5-c69e9f944c10 --query 'KeyMetadata.KeyState' --output text)" = "PendingDeletion"
+          for region in us-east-1 us-west-2; do
+            test "$(aws lambda list-functions --region "$region" --query 'length(Functions[?starts_with(FunctionName, `portfolio-dr-`)])' --output text)" = "0"
+            test "$(aws dynamodb list-tables --region "$region" --query 'length(TableNames[?starts_with(@, `portfolio-dr-`)])' --output text)" = "0"
+            test "$(aws apigatewayv2 get-apis --region "$region" --query 'length(Items[?starts_with(Name, `portfolio-dr-`)])' --output text)" = "0"
+            test "$(aws cloudwatch describe-alarms --region "$region" --alarm-name-prefix portfolio-dr- --query 'length(MetricAlarms)' --output text)" = "0"
+            test "$(aws logs describe-log-groups --region "$region" --log-group-name-prefix /aws/lambda/portfolio-dr- --query 'length(logGroups)' --output text)" = "0"
+          done
+          test "$(aws cloudwatch list-dashboards --region us-east-1 --dashboard-name-prefix portfolio-dr- --query 'length(DashboardEntries)' --output text)" = "0"
+          test "$(aws cloudwatch list-dashboards --region us-west-2 --dashboard-name-prefix portfolio-dr- --query 'length(DashboardEntries)' --output text)" = "0"
+          if aws s3api head-bucket --bucket portfolio-dr-293951765338-us-east-1 2>/dev/null; then exit 1; fi
+          if aws s3api head-bucket --bucket portfolio-dr-293951765338-us-west-2 2>/dev/null; then exit 1; fi
+          if aws iam get-role --role-name portfolio-dr-s3-replication >/dev/null 2>&1; then exit 1; fi
+          jq -n \
+            --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg retained "$retained" \
+            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_primary_encryption_key:"a7e1a0f4-be05-474d-b19d-bdf6da573b40",retained_signing_key:"de713abd-c143-49ac-8b9b-92d8d5aa2f8c",secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
+
+      - name: Preserve cleanup state and proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-dr-cleanup-state-${{ github.run_id }}
+          path: |
+            terraform/stacks/global/terraform.tfstate*
+            terraform/stacks/region-a/terraform.tfstate*
+            terraform/stacks/region-b/terraform.tfstate*
+            cleanup-proof.json
+          if-no-files-found: warn
+          retention-days: 7

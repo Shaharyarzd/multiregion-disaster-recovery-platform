@@ -47,7 +47,7 @@ jobs:
           aws dynamodb update-table --region us-east-1 --table-name "$table" --replica-updates Delete='{RegionName=us-west-2}' >/dev/null
           for attempt in {1..180}; do
             # shellcheck disable=SC2016
-            replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(Table.Replicas[?RegionName == `us-west-2`])' --output text)"
+            replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(not_null(Table.Replicas[?RegionName == `us-west-2`], `[]`))' --output text)"
             if [ "$replicas" = "0" ]; then break; fi
             test "$attempt" -lt 180
             sleep 5

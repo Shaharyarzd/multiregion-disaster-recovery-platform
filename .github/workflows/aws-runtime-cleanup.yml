@@ -215,7 +215,8 @@ jobs:
           tags="$(aws dynamodb list-tags-of-resource --region us-east-1 --resource-arn "$source_arn" --output json)"
           test "$(jq -r '.Tags[] | select(.Key == "Project") | .Value' <<<"$tags")" = "portfolio-dr"
           test "$(jq -r '.Tags[] | select(.Key == "DataClassification") | .Value' <<<"$tags")" = "SYNTHETIC"
-          replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(Table.Replicas)' --output text)"
+          # shellcheck disable=SC2016
+          replicas="$(aws dynamodb describe-table --region us-east-1 --table-name "$table" --query 'length(not_null(Table.Replicas, `[]`))' --output text)"
           if [ "$replicas" != "0" ]; then
             exit 1
           fi
@@ -288,7 +289,7 @@ jobs:
             --arg completed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg retained "$retained" \
             --arg resumed_from "${{ inputs.resume_cleanup_run_id }}" \
-            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,resumed_from_cleanup_run:($resumed_from | if . == "" then null else . end),preserved_failed_attempts:[{run_id:"34110697442",phase:"RegionARuntimeTeardown",failure_code:"TERRAFORM_PROVIDER_LIST_INSTANCE_PROFILES_PERMISSION",partial_cleanup:true},{run_id:"34131653420",phase:"RegionARuntimeTeardown",failure_code:"EXACT_ROLE_ID_HCL_QUOTING_GUARD",partial_cleanup:false}],disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_kms_dependencies:["primary-data-encryption","evidence-signing"],secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
+            '{schema:"com.portfolio.dr.cleanup-proof/1.0.0",status:"PASS",account:"293951765338",regions:["us-east-1","us-west-2"],completed_at:$completed_at,resumed_from_cleanup_run:($resumed_from | if . == "" then null else . end),preserved_failed_attempts:[{run_id:"34110697442",phase:"RegionARuntimeTeardown",failure_code:"TERRAFORM_PROVIDER_LIST_INSTANCE_PROFILES_PERMISSION",partial_cleanup:true},{run_id:"34131653420",phase:"RegionARuntimeTeardown",failure_code:"EXACT_ROLE_ID_HCL_QUOTING_GUARD",partial_cleanup:false},{run_id:"34132241781",phase:"GlobalTableTeardown",failure_code:"DELETE_TABLE_REPLICA_PERMISSION_REQUIRED",partial_cleanup:true},{run_id:"34133795559",phase:"ExactReplicaTeardown",failure_code:"REPLICAS_NULL_OBSERVATION_AFTER_SUCCESS",partial_cleanup:true}],disposable_runtime_remaining:0,replication_dependencies_remaining:0,retained_state_resources:($retained|split("\n")),retained_evidence_bucket:"portfolio-dr-293951765338-evidence",retained_kms_dependencies:["primary-data-encryption","evidence-signing"],secondary_key_state:"PendingDeletion"}' > cleanup-proof.json
 
       - name: Preserve cleanup state and proof
         if: always()
